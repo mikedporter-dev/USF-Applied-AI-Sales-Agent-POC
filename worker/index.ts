@@ -1,6 +1,7 @@
+import { parseApprovalRequest } from "../src/shared/approval";
 import { SAMPLE_ACCOUNTS, SAMPLE_AS_OF } from "../src/shared/sampleData";
 import { scoreAccounts } from "../src/shared/scoring";
-import type { AccountsResponse } from "../src/shared/types";
+import type { AccountsResponse, ApprovalResponse } from "../src/shared/types";
 import type { Env } from "./env";
 import { draftOutreachBrief } from "./nvidia";
 import * as supabase from "./supabase";
@@ -40,6 +41,16 @@ async function handleApi(request: Request, env: Env, path: string): Promise<Resp
 
   if (path === "/api/accounts" && request.method === "GET") {
     return json(await rankedAccounts(env));
+  }
+
+  if (path === "/api/contacts/approval" && request.method === "POST") {
+    if (!supabase.isConfigured(env)) {
+      return json({ error: "Approvals aren't saved for sample data. Connect Supabase to store them." }, 409);
+    }
+    const parsed = parseApprovalRequest(await request.json().catch(() => null));
+    if (typeof parsed === "string") return json({ error: parsed }, 400);
+    const body: ApprovalResponse = { contacts: await supabase.setApproval(env, parsed) };
+    return json(body);
   }
 
   const brief = path.match(/^\/api\/accounts\/(\d{10})\/brief$/);

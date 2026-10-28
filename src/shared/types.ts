@@ -53,12 +53,20 @@ export interface Connection {
 
 export type EmailStatus = "not_enriched" | "enriched" | "unavailable";
 
+/** Seller's decision on a target contact. Email enrichment requires "approved". */
+export type ApprovalStatus = "pending" | "approved" | "rejected";
+
 /** The one person per account the seller is trying to reach, found via Apollo. */
 export interface TargetContact {
+  /** target_contacts.id */
+  id: number;
   name: string;
   title: string;
   /** Index into CONTACT_ROLE_LADDER that this contact matched. */
   ladderRank: number;
+  approvalStatus: ApprovalStatus;
+  /** ISO timestamp, set only while approved. */
+  approvedAt?: string;
   emailStatus: EmailStatus;
   email?: string;
 }
@@ -105,4 +113,16 @@ export interface AccountsResponse {
 export interface HealthResponse {
   ok: boolean;
   integrations: { nvidia: boolean; supabase: boolean };
+}
+
+/** POST /api/contacts/approval */
+export interface ApprovalRequest {
+  contactIds: number[];
+  status: ApprovalStatus;
+}
+
+export type ContactApprovalUpdate = Pick<TargetContact, "id" | "approvalStatus" | "approvedAt" | "emailStatus" | "email">;
+
+export interface ApprovalResponse {
+  contacts: ContactApprovalUpdate[];
 }

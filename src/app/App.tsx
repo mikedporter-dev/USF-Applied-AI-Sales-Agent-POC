@@ -1,12 +1,35 @@
 import { useEffect, useMemo, useState, type ReactNode } from "react";
 import { Logo, ScoreBar, TierPill, formatDate, formatRevenue, signalLabel } from "../components/ui";
+import { applyApproval } from "../shared/approval";
 import { SAMPLE_ACCOUNTS, SAMPLE_AS_OF } from "../shared/sampleData";
 import { CONTACT_ROLE_LADDER, OUTREACH_LIST, scoreAccounts, selectOutreachList } from "../shared/scoring";
-import type { AccountsResponse, HealthResponse, ScoredAccount, Tier } from "../shared/types";
+import type {
+  AccountsResponse,
+  ApprovalResponse,
+  ApprovalStatus,
+  ContactApprovalUpdate,
+  HealthResponse,
+  ScoredAccount,
+  TargetContact,
+  Tier,
+} from "../shared/types";
 
 type TierFilter = "all" | Tier;
 
 type BriefState = { status: "loading" } | { status: "done"; text: string } | { status: "error"; message: string };
+
+type Notice = { kind: "ok" | "error"; text: string };
+
+const APPROVAL_LABELS: Record<ApprovalStatus, string> = {
+  pending: "Pending approval",
+  approved: "Approved",
+  rejected: "Rejected",
+};
+
+/** Copy every approval field explicitly: JSON drops undefined, so a spread would keep a stale approvedAt or email. */
+function withApproval(contact: TargetContact, u: ContactApprovalUpdate): TargetContact {
+  return { ...contact, approvalStatus: u.approvalStatus, approvedAt: u.approvedAt, emailStatus: u.emailStatus, email: u.email };
+}
 
 /** Fall back to in-browser scoring of sample data when the Worker isn't running (e.g. `vite` alone). */
 function offlineSample(): AccountsResponse {
@@ -27,7 +50,8 @@ export function App() {
   const [selectedCik, setSelectedCik] = useState<string | null>(null);
   const [sheetOpen, setSheetOpen] = useState(false);
   const [included, setIncluded] = useState<Set<string>>(new Set());
-  const [approvedCount, setApprovedCount] = useState<number | null>(null);
+  const [saving, setSaving] = useState(false);
+  const [notice, setNotice] = useState<Notice | null>(null);
   const [briefs, setBriefs] = useState<Record<string, BriefState>>({});
 
   useEffect(() => {
@@ -50,9 +74,13 @@ export function App() {
   );
   const selected = accounts.find((a) => a.company.cik === selectedCik);
   const tierCount = (t: Tier) => accounts.filter((a) => a.tier === t).length;
+  const contacts = accounts.flatMap((a) => (a.targetContact ? [a.targetContact] : []));
+  const approvalCount = (s: ApprovalStatus) => contacts.filter((c) => c.approvalStatus === s).length;
+  const selectedContactIds = accounts.flatMap((a) =>
+    included.has(a.company.cik) && a.targetContact ? [a.targetContact.id] : [],
+  );
 
   const toggleIncluded = (cik: string) => {
-    setApprovedCount(null);
     setIncluded((prev) => {
       const next = new Set(prev);
       if (next.has(cik)) next.delete(cik);
@@ -64,6 +92,48 @@ export function App() {
   const openAccount = (cik: string) => {
     setSelectedCik(cik);
     setSheetOpen(true);
+  };
+
+  /** Record the seller's decision. Sample data is updated in this tab only; live data goes to Supabase. */
+  const decide = async (contactIds: number[], status: ApprovalStatus) => {
+    if (!data || contactIds.length === 0) return;
+    setSaving(true);
+    setNotice(null);
+    try {
+      let updates: ContactApprovalUpdate[];
+      if (data.source === "sample") {
+        const now = new Date();
+        updates = contacts.filter((c) => contactIds.includes(c.id)).map((c) => applyApproval(c, status, now));
+      } else {
+        const res = await getJson<ApprovalResponse>("/api/contacts/approval", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ contactIds, status }),
+        });
+        updates = res.contacts;
+      }
+      const byId = new Map(updates.map((u) => [u.id, u]));
+      setData((d) =>
+        d && {
+          ...d,
+          accounts: d.accounts.map((a) => {
+            const u = a.targetContact && byId.get(a.targetContact.id);
+            return u && a.targetContact ? { ...a, targetContact: withApproval(a.targetContact, u) } : a;
+          }),
+        },
+      );
+      const n = updates.length;
+      setNotice({
+        kind: "ok",
+        text:
+          `${status === "approved" ? "Approved" : status === "rejected" ? "Rejected" : "Reset"} ${n} contact${n === 1 ? "" : "s"}.` +
+          (data.source === "sample" ? " Sample data, so this isn't saved." : ""),
+      });
+    } catch (err) {
+      setNotice({ kind: "error", text: err instanceof Error ? err.message : "Couldn't save the approval." });
+    } finally {
+      setSaving(false);
+    }
   };
 
   const draftBrief = async (cik: string) => {
@@ -113,7 +183,12 @@ export function App() {
             <PipelineStep n={2} title="Read filings" note="Massive + EDGAR not connected" state="pending" />
             <PipelineStep n={3} title="Score & rank" note={`${accounts.length} accounts ranked`} state="done" />
             <PipelineStep n={4} title="Find contacts" note="Apollo not connected" state="pending" />
-            <PipelineStep n={5} title="Approve & enrich" note={`${included.size} selected`} state="active" />
+            <PipelineStep
+              n={5}
+              title="Approve & enrich"
+              note={`${approvalCount("approved")} approved · ${approvalCount("pending")} pending`}
+              state="active"
+            />
           </ol>
           <span className="label">Integrations</span>
           <ul className="integrations">
@@ -135,7 +210,7 @@ export function App() {
             <Stat label="Accounts ranked" value={accounts.length} />
             <Stat label="Tier 1" value={tierCount(1)} />
             <Stat label="Tier 2" value={tierCount(2)} />
-            <Stat label="Outreach list" value={included.size} note={`Target ${OUTREACH_LIST.min}–${OUTREACH_LIST.max}`} />
+            <Stat label="Approved contacts" value={approvalCount("approved")} note={`${approvalCount("pending")} pending`} />
           </div>
 
           <div className="tabs" role="tablist" aria-label="Filter by tier">
@@ -186,8 +261,8 @@ export function App() {
             <AccountDetail
               account={selected}
               brief={briefs[selected.company.cik]}
-              included={included.has(selected.company.cik)}
-              onToggle={() => toggleIncluded(selected.company.cik)}
+              saving={saving}
+              onDecide={(status) => selected.targetContact && decide([selected.targetContact.id], status)}
               onDraftBrief={() => draftBrief(selected.company.cik)}
               onClose={() => setSheetOpen(false)}
             />
@@ -198,21 +273,36 @@ export function App() {
       </div>
 
       <footer className="approve-bar">
-        <span>
-          {approvedCount !== null ? (
-            <>
-              <strong>{approvedCount} accounts approved.</strong> Email enrichment will run here once Apollo is
-              connected.
-            </>
+        <span role="status" className={notice?.kind === "error" ? "approve-error" : undefined}>
+          {notice ? (
+            notice.text
           ) : (
             <>
-              <strong className="mono">{included.size}</strong> accounts selected for email enrichment
+              <strong className="mono">{selectedContactIds.length}</strong> contact
+              {selectedContactIds.length === 1 ? "" : "s"} selected
+              <span className="approve-hint">
+                {" "}
+                · emails are enriched only after approval, for the top {OUTREACH_LIST.min}–{OUTREACH_LIST.max} accounts
+              </span>
             </>
           )}
         </span>
-        <button className="btn btn-primary" disabled={included.size === 0} onClick={() => setApprovedCount(included.size)}>
-          Approve list
-        </button>
+        <span className="approve-actions">
+          <button
+            className="btn btn-ghost"
+            disabled={saving || selectedContactIds.length === 0}
+            onClick={() => decide(selectedContactIds, "rejected")}
+          >
+            Reject
+          </button>
+          <button
+            className="btn btn-primary"
+            disabled={saving || selectedContactIds.length === 0}
+            onClick={() => decide(selectedContactIds, "approved")}
+          >
+            {saving ? "Saving…" : "Approve selected"}
+          </button>
+        </span>
       </footer>
     </div>
   );
@@ -258,16 +348,14 @@ function AccountRow(props: {
   onToggle: () => void;
 }) {
   const { account: a } = props;
-  const eligible = a.tier !== 3;
   return (
     <div className={props.active ? "row is-active" : "row"} role="listitem">
       <input
         type="checkbox"
         checked={props.included}
-        disabled={!eligible && !props.included}
         onChange={props.onToggle}
-        aria-label={`Include ${a.company.name} in outreach list`}
-        title={eligible ? "Include in outreach list" : "Tier 3 accounts aren't eligible for outreach"}
+        aria-label={`Select ${a.company.name}`}
+        title="Select for approval"
       />
       <span className="mono row-rank">{String(a.rank).padStart(2, "0")}</span>
       <button className="row-main" onClick={props.onOpen}>
@@ -298,6 +386,7 @@ function AccountRow(props: {
           <>
             {a.targetContact.title}
             <small>{a.targetContact.name}</small>
+            <ApprovalPill status={a.targetContact.approvalStatus} />
           </>
         ) : (
           <small>Not searched yet</small>
@@ -311,8 +400,8 @@ function AccountRow(props: {
 function AccountDetail(props: {
   account: ScoredAccount;
   brief: BriefState | undefined;
-  included: boolean;
-  onToggle: () => void;
+  saving: boolean;
+  onDecide: (status: ApprovalStatus) => void;
   onDraftBrief: () => void;
   onClose: () => void;
 }) {
@@ -377,22 +466,46 @@ function AccountDetail(props: {
 
       <DetailBlock title="Who you're trying to reach">
         {a.targetContact ? (
-          <p className="person">
-            <strong>{a.targetContact.name}</strong>
-            <span>
-              {a.targetContact.title} · ladder step {a.targetContact.ladderRank + 1} of {CONTACT_ROLE_LADDER.length}
-            </span>
+          <>
+            <p className="person">
+              <strong>{a.targetContact.name}</strong>
+              <span>
+                {a.targetContact.title} · ladder step {a.targetContact.ladderRank + 1} of {CONTACT_ROLE_LADDER.length}
+              </span>
+            </p>
+            <div className="approval">
+              <ApprovalPill status={a.targetContact.approvalStatus} />
+              <span className="muted">
+                {a.targetContact.approvedAt
+                  ? `on ${formatDate(a.targetContact.approvedAt)}`
+                  : a.targetContact.approvalStatus === "pending"
+                    ? "Email can't be enriched until approved"
+                    : "Won't be enriched"}
+              </span>
+            </div>
             <span className="chip">
               {a.targetContact.emailStatus === "enriched" ? a.targetContact.email : "Email not enriched"}
             </span>
-          </p>
+            <div className="approval-actions">
+              <button
+                className="btn btn-primary btn-sm"
+                disabled={props.saving || a.targetContact.approvalStatus === "approved"}
+                onClick={() => props.onDecide("approved")}
+              >
+                Approve
+              </button>
+              <button
+                className="btn btn-ghost btn-sm"
+                disabled={props.saving || a.targetContact.approvalStatus === "rejected"}
+                onClick={() => props.onDecide("rejected")}
+              >
+                Reject
+              </button>
+            </div>
+          </>
         ) : (
           <p className="muted">Apollo search hasn't run for this account.</p>
         )}
-        <label className="check">
-          <input type="checkbox" checked={props.included} onChange={props.onToggle} disabled={a.tier === 3 && !props.included} />
-          Include in outreach list
-        </label>
       </DetailBlock>
 
       <DetailBlock title={`Evidence · ${signals.length} signal${signals.length === 1 ? "" : "s"}`}>
@@ -428,6 +541,10 @@ function AccountDetail(props: {
       </DetailBlock>
     </div>
   );
+}
+
+function ApprovalPill({ status }: { status: ApprovalStatus }) {
+  return <span className={`approval-pill approval-${status}`}>{APPROVAL_LABELS[status]}</span>;
 }
 
 function DetailBlock({ title, children }: { title: string; children: ReactNode }) {

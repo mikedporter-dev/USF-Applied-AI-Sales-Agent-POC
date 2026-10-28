@@ -450,6 +450,50 @@
   font-size: 14px;
   color: var(--text-2);
 }
+.approve-actions {
+  display: flex;
+  flex: none;
+  gap: 8px;
+}
+.approve-error {
+  color: #c2410c;
+}
+.approval {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  font-size: 13px;
+}
+.approval-actions {
+  display: flex;
+  gap: 8px;
+}
+.approval-pill {
+  display: inline-flex;
+  align-items: center;
+  height: 20px;
+  padding: 0 7px;
+  border-radius: 999px;
+  font-size: 11px;
+  font-weight: 500;
+  white-space: nowrap;
+}
+.row-cell .approval-pill {
+  margin-top: 3px;
+}
+.approval-pending {
+  color: var(--tier2);
+  background: var(--tier2-bg);
+}
+.approval-approved {
+  color: var(--tier1);
+  background: var(--tier1-bg);
+}
+.approval-rejected {
+  color: var(--tier3);
+  background: var(--tier3-bg);
+}
 .approve-bar strong {
   color: var(--text);
   font-weight: 500;
@@ -576,5 +620,8 @@
   .approve-bar {
     padding: 10px 16px;
     font-size: 13px;
+  }
+  .approve-hint {
+    display: none;
   }
 }

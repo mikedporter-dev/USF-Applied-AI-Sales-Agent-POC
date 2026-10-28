@@ -40,6 +40,14 @@ Defined in `src/shared/scoring.ts`, with every weight in one place:
   with Tier 2, up to 100 accounts.
 - Only signals from the trailing 12 months count. Companies with no Manager+ connection are not scored.
 
+## Seller approval
+
+Each target contact has an approval status: `pending` (the default), `approved`, or `rejected`. The seller
+approves or rejects contacts in the workspace, one at a time or in bulk. Emails are enriched only after
+approval, and the database enforces this: a check constraint rejects any write that stores an email, or
+sets `email_status` to `enriched` or `unavailable`, on a contact that isn't approved. Rejecting a contact
+clears any email already stored for it.
+
 ## Develop
 
 ```bash
@@ -85,30 +93,40 @@ The model is set by `NVIDIA_MODEL` in `wrangler.jsonc`.
 
 ### Database
 
-Apply `supabase/migrations/0001_init.sql` in the Supabase SQL editor, or run `supabase db push`.
-Row-level security is on with no policies, so only the Worker's service-role key can read the data.
-Once `SUPABASE_URL` and `SUPABASE_SERVICE_ROLE_KEY` are set, `/api/accounts` reads from Supabase
-instead of the sample data.
+Run the files in `supabase/migrations/` in order in the Supabase SQL editor, or run `supabase db push`:
+
+1. `0001_init.sql`: tables, enums, row-level security
+2. `0002_target_contact_approval.sql`: seller approval on `target_contacts`
+
+Each migration runs in a single transaction. Row-level security is on with no policies, so only the
+Worker's service-role key can read the data. Once `SUPABASE_URL` and `SUPABASE_SERVICE_ROLE_KEY` are set,
+`/api/accounts` reads from Supabase instead of the sample data, and approvals are saved there.
 
 ## Deploy
 
-```bash
-npx wrangler login
-```
+Deploys run through **Cloudflare Workers Builds**, connected to this repository:
 
-```bash
-npm run deploy
-```
+| Setting        | Value                  |
+| -------------- | ---------------------- |
+| Worker name    | `usf-sales-agent-poc` (must match `name` in `wrangler.jsonc`) |
+| Build command  | `npm run build`        |
+| Deploy command | `npx wrangler deploy`  |
+| Node version   | 22 (from `.node-version`) |
 
-> **Before loading real data:** the API has no authentication yet. Put the Worker behind
-> [Cloudflare Access](https://developers.cloudflare.com/cloudflare-one/applications/) before it holds
-> real network data or an NVIDIA key, because anyone with the URL could read the accounts or spend LLM
-> credits.
+Runtime secrets go in the dashboard under the Worker's **Settings → Variables and Secrets**, with the
+type set to **Secret**: `SUPABASE_URL`, `SUPABASE_SERVICE_ROLE_KEY`, and `NVIDIA_API_KEY`. Each
+`wrangler deploy` replaces plain-text variables with the ones in `wrangler.jsonc` but keeps secrets.
+
+To deploy from your own machine instead: `npx wrangler login`, then `npm run deploy`.
+
+> **Before adding the secrets:** the API has no authentication of its own. Put the Worker's hostname
+> behind [Cloudflare Access](https://developers.cloudflare.com/cloudflare-one/applications/) first.
+> Without it, anyone with the URL could read your network and target contacts, approve or reject
+> contacts, or spend LLM credits.
 
 ## Not built yet
 
 - LinkedIn connections CSV import and matching against the S&P 1500 universe
 - Massive and SEC EDGAR ingestion, with LLM extraction of signals from filing text
 - Apollo contact search along the role ladder, and email enrichment after approval, within credits
-- Saving approvals to Supabase
 - Scoped for a future version: AI team benchmarks and peer comparisons (these need paid data)
