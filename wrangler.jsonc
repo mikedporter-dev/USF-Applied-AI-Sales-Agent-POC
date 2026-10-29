@@ -14,17 +14,19 @@
   },
   "vars": {
     "NVIDIA_BASE_URL": "https://integrate.api.nvidia.com/v1",
-    "NVIDIA_MODEL": "nvidia/nemotron-3.5-lightning-30b-a3b"
+    "NVIDIA_MODEL": "nvidia/nemotron-3.5-lightning-30b-a3b",
+    "MASSIVE_BASE_URL": "https://api.massive.com"
   },
   // Secrets (set with `wrangler secret put <NAME>`, or .dev.vars locally):
-  //   NVIDIA_API_KEY, SUPABASE_URL, SUPABASE_SECRET_KEY
+  //   NVIDIA_API_KEY, SUPABASE_URL, SUPABASE_SECRET_KEY, MASSIVE_API_KEY
   // Preview builds of pull-request branches (`wrangler preview`) need their own settings.
-  // They get no secrets, so previews show sample data and can't reach Supabase or spend
-  // NVIDIA credits.
+  // They get no secrets, so previews show sample data and can't reach Supabase, spend
+  // NVIDIA credits, or call Massive.
   "previews": {
     "vars": {
       "NVIDIA_BASE_URL": "https://integrate.api.nvidia.com/v1",
-      "NVIDIA_MODEL": "nvidia/nemotron-3.5-lightning-30b-a3b"
+      "NVIDIA_MODEL": "nvidia/nemotron-3.5-lightning-30b-a3b",
+      "MASSIVE_BASE_URL": "https://api.massive.com"
     }
   },
   "observability": { "enabled": true }

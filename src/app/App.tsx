@@ -169,6 +169,9 @@ export function App() {
               )}
             </span>
           )}
+          <a className="btn btn-ghost btn-sm" href="/research/">
+            Research a company
+          </a>
           <a className="btn btn-ghost btn-sm" href="/">
             Home
           </a>
@@ -194,8 +197,8 @@ export function App() {
           <ul className="integrations">
             <Integration name="NVIDIA LLM" on={health?.integrations.nvidia} />
             <Integration name="Supabase" on={health?.integrations.supabase} />
-            <Integration name="Massive" on={false} />
-            <Integration name="SEC EDGAR" on={false} />
+            <Integration name="Massive" on={health?.integrations.massive} />
+            <Integration name="SEC EDGAR" on={health?.integrations.edgar} />
             <Integration name="Apollo" on={false} />
           </ul>
         </aside>

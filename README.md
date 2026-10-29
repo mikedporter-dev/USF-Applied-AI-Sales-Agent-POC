@@ -99,6 +99,20 @@ removed. From a browser (after the Cloudflare Access login):
 `/api/chat?message=Hello`. From code: `POST /api/chat` with `{"message": "Hello"}`. Both return
 `{"model": "...", "reply": "..."}`. Without the `NVIDIA_API_KEY` secret it returns a 503.
 
+### Research agent
+
+`/research/` runs the account research agent on one ticker. The NVIDIA model decides which filings to
+read with these tools: list and read 8-Ks, search and read 10-K sections, list Form 3s, and, when
+`SEC_USER_AGENT` is set, list EDGAR filings and read their documents (10-Q MD&A, 8-K exhibits). It
+records evidence with `record_signal`, and code rejects any quote that isn't in text the agent actually
+read, or any filing outside the 12-month window. Scoring uses `src/shared/scoring.ts`. A run is capped
+at 14 model turns and 6 EDGAR documents, and progress streams to the page as newline-delimited JSON
+from `POST /api/research`.
+
+It needs the `NVIDIA_API_KEY` and `MASSIVE_API_KEY` secrets. `SEC_USER_AGENT` is optional: SEC
+requires a name and contact email on each request, e.g. `Jane Doe jane@example.com`, so it's kept as a
+secret rather than in the code.
+
 ### Database
 
 Run the files in `supabase/migrations/` in order in the Supabase SQL editor, or run `supabase db push`:
@@ -125,7 +139,8 @@ Deploys run through **Cloudflare Workers Builds**, connected to this repository:
 | Node version   | 22 (from `.node-version`) |
 
 Runtime secrets go in the dashboard under the Worker's **Settings → Variables and Secrets**, with the
-type set to **Secret**: `SUPABASE_URL`, `SUPABASE_SECRET_KEY`, and `NVIDIA_API_KEY`. Each
+type set to **Secret**: `SUPABASE_URL`, `SUPABASE_SECRET_KEY`, `NVIDIA_API_KEY`, `MASSIVE_API_KEY`, and
+`SEC_USER_AGENT`. Each
 `wrangler deploy` replaces plain-text variables with the ones in `wrangler.jsonc` but keeps secrets.
 
 Only `main` deploys to production. Pull-request branches build as previews with `npx wrangler preview`,
@@ -139,9 +154,21 @@ To deploy from your own machine instead: `npx wrangler login`, then `npm run dep
 > Without it, anyone with the URL could read your network and target contacts, approve or reject
 > contacts, or spend LLM credits.
 
-## Not built yet
+## Roadmap
 
-- LinkedIn connections CSV import and matching against the S&P 1500 universe
-- Massive and SEC EDGAR ingestion, with LLM extraction of signals from filing text
-- Apollo contact search along the role ladder, and email enrichment after approval, within credits
-- Scoped for a future version: AI team benchmarks and peer comparisons (these need paid data)
+In build order:
+
+1. **S&P Composite 1500 universe:** load the companies with SEC CIK, size and industry.
+2. **LinkedIn import:** upload the seller's `Connections.csv` export, keep Manager+ connections, and
+   match them to the universe.
+3. **Saved research:** run the research agent for every matched company in the background
+   (Cloudflare Workflows or Queues) and save its signals, quotes and run log to Supabase.
+4. **Daily monitor:** a scheduled job (Cloudflare Cron Triggers) checks each matched company on EDGAR
+   for new 8-Ks, Form 3s, 10-Qs and 10-Ks. Only companies with something new go to the research agent,
+   in an update mode that adds new signals and retires outdated ones. Scores are recalculated daily
+   from saved signals, so the 12-month window stays current. When an account moves up a tier or gains
+   a strong new trigger, the agent writes a short "what changed and why it matters" alert.
+5. **Apollo contacts:** search the role ladder for the top 50–100 accounts, and enrich emails only
+   after seller approval, within credits. Needs an Apollo plan with API access to people search.
+
+Scoped for a future version: AI team benchmarks and peer comparisons (these need paid data).

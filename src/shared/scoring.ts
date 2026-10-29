@@ -129,36 +129,39 @@ function reasons(signals: Signal[], fit: number, demoted: boolean): string[] {
 }
 
 /**
- * Score accounts on Fit, Intent, and Gap using only signals from the trailing
- * window, demote companies with published scaled results, then rank.
- * Accounts with no Manager+ connection are excluded: the agent starts from the network.
+ * Score one account on Fit, Intent, and Gap using only signals from the trailing
+ * window, demoting it if it already publishes scaled AI results. Its rank is 0
+ * until it is ranked against others by scoreAccounts.
+ */
+export function scoreAccount(input: AccountInput, asOf = new Date()): ScoredAccount {
+  const signals = input.signals.filter((s) => inWindow(s, asOf));
+  const fit = fitScore(input);
+  const intent = intentScore(signals);
+  const gap = gapScore(signals);
+  const demoted = count(signals, "ai_scaled_results") > 0;
+  const weighted = COMPOSITE_WEIGHTS.fit * fit + COMPOSITE_WEIGHTS.intent * intent + COMPOSITE_WEIGHTS.gap * gap;
+  const total = clamp(demoted ? weighted * DEMOTION_FACTOR : weighted);
+  return {
+    ...input,
+    signals,
+    rank: 0,
+    tier: tierFor(total),
+    scores: { fit, intent, gap, total },
+    demoted,
+    whyRanks: reasons(signals, fit, demoted),
+    whyNow: latestTrigger(signals),
+    warmPath: bestConnection(input.connections),
+  };
+}
+
+/**
+ * Score and rank accounts. Accounts with no Manager+ connection are excluded:
+ * the agent starts from the network.
  */
 export function scoreAccounts(inputs: AccountInput[], asOf = new Date()): ScoredAccount[] {
-  const scored = inputs
+  return inputs
     .filter((input) => input.connections.length > 0)
-    .map((input) => {
-      const signals = input.signals.filter((s) => inWindow(s, asOf));
-      const fit = fitScore(input);
-      const intent = intentScore(signals);
-      const gap = gapScore(signals);
-      const demoted = count(signals, "ai_scaled_results") > 0;
-      const weighted =
-        COMPOSITE_WEIGHTS.fit * fit + COMPOSITE_WEIGHTS.intent * intent + COMPOSITE_WEIGHTS.gap * gap;
-      const total = clamp(demoted ? weighted * DEMOTION_FACTOR : weighted);
-      return {
-        ...input,
-        signals,
-        rank: 0,
-        tier: tierFor(total),
-        scores: { fit, intent, gap, total },
-        demoted,
-        whyRanks: reasons(signals, fit, demoted),
-        whyNow: latestTrigger(signals),
-        warmPath: bestConnection(input.connections),
-      };
-    });
-
-  return scored
+    .map((input) => scoreAccount(input, asOf))
     .sort((a, b) => b.scores.total - a.scores.total || a.company.name.localeCompare(b.company.name))
     .map((account, i) => ({ ...account, rank: i + 1 }));
 }
