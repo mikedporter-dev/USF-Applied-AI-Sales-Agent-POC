@@ -47,12 +47,13 @@ interface CompanyRow {
 }
 
 export function isConfigured(env: Env): boolean {
-  return Boolean(env.SUPABASE_URL && env.SUPABASE_SERVICE_ROLE_KEY);
+  return Boolean(env.SUPABASE_URL && env.SUPABASE_SECRET_KEY);
 }
 
 function client(env: Env): SupabaseClient {
-  // The service-role key bypasses row-level security. It must only ever live in the Worker.
-  return createClient(env.SUPABASE_URL!, env.SUPABASE_SERVICE_ROLE_KEY!, {
+  // The secret key (sb_secret_..., or the legacy service_role key) bypasses row-level
+  // security. It must only ever live in the Worker.
+  return createClient(env.SUPABASE_URL!, env.SUPABASE_SECRET_KEY!, {
     auth: { persistSession: false },
   });
 }

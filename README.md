@@ -86,7 +86,7 @@ npx wrangler secret put SUPABASE_URL
 ```
 
 ```bash
-npx wrangler secret put SUPABASE_SERVICE_ROLE_KEY
+npx wrangler secret put SUPABASE_SECRET_KEY
 ```
 
 The model is set by `NVIDIA_MODEL` in `wrangler.jsonc` (currently `nvidia/nemotron-3.5-lightning-30b-a3b`,
@@ -107,7 +107,7 @@ Run the files in `supabase/migrations/` in order in the Supabase SQL editor, or 
 2. `0002_target_contact_approval.sql`: seller approval on `target_contacts`
 
 Each migration runs in a single transaction. Row-level security is on with no policies, so only the
-Worker's service-role key can read the data. Once `SUPABASE_URL` and `SUPABASE_SERVICE_ROLE_KEY` are set,
+Worker's Supabase secret key can read the data. Once `SUPABASE_URL` and `SUPABASE_SECRET_KEY` are set,
 `/api/accounts` reads from Supabase instead of the sample data, and approvals are saved there.
 
 ## Deploy
@@ -122,7 +122,7 @@ Deploys run through **Cloudflare Workers Builds**, connected to this repository:
 | Node version   | 22 (from `.node-version`) |
 
 Runtime secrets go in the dashboard under the Worker's **Settings → Variables and Secrets**, with the
-type set to **Secret**: `SUPABASE_URL`, `SUPABASE_SERVICE_ROLE_KEY`, and `NVIDIA_API_KEY`. Each
+type set to **Secret**: `SUPABASE_URL`, `SUPABASE_SECRET_KEY`, and `NVIDIA_API_KEY`. Each
 `wrangler deploy` replaces plain-text variables with the ones in `wrangler.jsonc` but keeps secrets.
 
 To deploy from your own machine instead: `npx wrangler login`, then `npm run deploy`.

@@ -17,6 +17,6 @@
     "NVIDIA_MODEL": "nvidia/nemotron-3.5-lightning-30b-a3b"
   },
   // Secrets (set with `wrangler secret put <NAME>`, or .dev.vars locally):
-  //   NVIDIA_API_KEY, SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY
+  //   NVIDIA_API_KEY, SUPABASE_URL, SUPABASE_SECRET_KEY
   "observability": { "enabled": true }
 }
