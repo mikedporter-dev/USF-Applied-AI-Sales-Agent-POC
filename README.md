@@ -154,9 +154,21 @@ To deploy from your own machine instead: `npx wrangler login`, then `npm run dep
 > Without it, anyone with the URL could read your network and target contacts, approve or reject
 > contacts, or spend LLM credits.
 
-## Not built yet
+## Roadmap
 
-- LinkedIn connections CSV import and matching against the S&P 1500 universe
-- Running the research agent for every matched company in the background, and saving its findings to Supabase
-- Apollo contact search along the role ladder, and email enrichment after approval, within credits
-- Scoped for a future version: AI team benchmarks and peer comparisons (these need paid data)
+In build order:
+
+1. **S&P Composite 1500 universe:** load the companies with SEC CIK, size and industry.
+2. **LinkedIn import:** upload the seller's `Connections.csv` export, keep Manager+ connections, and
+   match them to the universe.
+3. **Saved research:** run the research agent for every matched company in the background
+   (Cloudflare Workflows or Queues) and save its signals, quotes and run log to Supabase.
+4. **Daily monitor:** a scheduled job (Cloudflare Cron Triggers) checks each matched company on EDGAR
+   for new 8-Ks, Form 3s, 10-Qs and 10-Ks. Only companies with something new go to the research agent,
+   in an update mode that adds new signals and retires outdated ones. Scores are recalculated daily
+   from saved signals, so the 12-month window stays current. When an account moves up a tier or gains
+   a strong new trigger, the agent writes a short "what changed and why it matters" alert.
+5. **Apollo contacts:** search the role ladder for the top 50–100 accounts, and enrich emails only
+   after seller approval, within credits. Needs an Apollo plan with API access to people search.
+
+Scoped for a future version: AI team benchmarks and peer comparisons (these need paid data).
