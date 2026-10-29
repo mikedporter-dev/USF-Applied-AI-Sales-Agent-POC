@@ -39,6 +39,20 @@ describe("chat", () => {
     });
   });
 
+  it("asks for a direct answer when thinking is off, and leaves the default alone otherwise", async () => {
+    const fetchMock = vi.fn(async () => completion("Hi"));
+    vi.stubGlobal("fetch", fetchMock);
+    const bodyOf = (call: number) =>
+      JSON.parse((fetchMock.mock.calls[call] as unknown as [string, RequestInit])[1].body as string);
+
+    await chat(env, [{ role: "user", content: "Hi" }], { thinking: false, maxTokens: 1024 });
+    expect(bodyOf(0)).toMatchObject({ max_tokens: 1024, chat_template_kwargs: { enable_thinking: false } });
+
+    await chat(env, [{ role: "user", content: "Hi" }]);
+    expect(bodyOf(1).chat_template_kwargs).toBeUndefined();
+    expect(bodyOf(1).max_tokens).toBe(8192);
+  });
+
   it("explains when the token limit is spent on thinking", async () => {
     vi.stubGlobal("fetch", async () => completion("<think>long", "length"));
     await expect(chat(env, [{ role: "user", content: "Hi" }])).rejects.toThrow(/max_tokens/);
