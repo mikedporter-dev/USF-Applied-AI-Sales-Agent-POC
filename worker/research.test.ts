@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { ResearchEvent } from "../src/shared/research";
 import type { Env } from "./env";
-import { isValidTicker, MAX_TURNS, runResearch } from "./research";
+import { isValidTicker, MAX_TURNS, runResearch, WRAP_UP_TURNS } from "./research";
 
 const NOW = new Date("2026-10-29T12:00:00Z");
 const TENK_URL = "https://www.sec.gov/Archives/edgar/data/1/0000000001-26-000001.txt";
@@ -51,7 +51,7 @@ const turn = (...tool_calls: ReturnType<typeof toolCall>[]) =>
   new Response(JSON.stringify({ choices: [{ finish_reason: "tool_calls", message: { content: null, tool_calls } }] }));
 
 function mockFetch(script: (() => Response)[]) {
-  const nvidiaBodies: { messages: { role: string }[]; tools: { function: { name: string } }[] }[] = [];
+  const nvidiaBodies: { messages: { role: string; content: string | null }[]; tools: { function: { name: string } }[] }[] = [];
   let step = 0;
   vi.stubGlobal("fetch", async (input: RequestInfo | URL, init?: RequestInit) => {
     const url = new URL(String(input));
@@ -133,10 +133,43 @@ describe("runResearch", () => {
     expect(lastRequest.tools.map((t) => t.function.name)).not.toContain("read_edgar_document");
   });
 
-  it("stops at the turn limit if the model never finishes", async () => {
-    const { result, nvidiaBodies } = await collect([]);
+  it("reminds the agent near the limit, then gives a record-only wrap-up", async () => {
+    const { result, nvidiaBodies, events } = await collect([]);
     expect(result.stopReason).toBe("step_limit");
-    expect(nvidiaBodies).toHaveLength(MAX_TURNS);
+    expect(nvidiaBodies).toHaveLength(MAX_TURNS + WRAP_UP_TURNS);
+
+    const userText = (i: number) => nvidiaBodies[i].messages.filter((m) => m.role === "user").map((m) => m.content).join("\n");
+    expect(userText(MAX_TURNS - 1)).toContain("1 turn left");
+    expect(userText(MAX_TURNS)).toContain("Research time is up");
+
+    // Wrap-up turns only offer the recording tools, and refuse anything else.
+    expect(nvidiaBodies[MAX_TURNS].tools.map((t) => t.function.name).sort()).toEqual(["finish", "record_signal", "set_company_facts"]);
+    const lastToolResult = nvidiaBodies.at(-1)!.messages.filter((m) => m.role === "tool").at(-1)!;
+    expect(lastToolResult.content).toContain("only record_signal");
+    expect(events.filter((e) => e.type === "status" && e.message.startsWith("Wrapping up"))).toHaveLength(WRAP_UP_TURNS);
+  });
+
+  it("finishes during wrap-up and keeps what it records there", async () => {
+    const script = Array.from({ length: MAX_TURNS }, (_, i) => () => turn(toolCall(`s${i}`, "search_10k", { section: "business", terms: ["artificial intelligence"] })));
+    script.push(() =>
+      turn(
+        toolCall("w1", "record_signal", {
+          kind: "ai_commitment",
+          summary: "Commits $250 million to AI in claims.",
+          form: "10-K",
+          filed_at: "2026-02-20",
+          url: TENK_URL,
+          quote: "commits $250 million to artificial intelligence",
+        }),
+        toolCall("w2", "finish", { summary: "" }),
+      ),
+    );
+    const { result, nvidiaBodies, events } = await collect(script);
+    expect(result.stopReason).toBe("finished");
+    expect(result.signals).toHaveLength(1);
+    expect(nvidiaBodies).toHaveLength(MAX_TURNS + 1);
+    // Repeats of the same search are skipped after the first.
+    expect(events.filter((e) => e.type === "tool" && e.detail.includes("repeat search skipped"))).toHaveLength(MAX_TURNS - 1);
   });
 
   it("offers EDGAR tools when SEC_USER_AGENT is set", async () => {
