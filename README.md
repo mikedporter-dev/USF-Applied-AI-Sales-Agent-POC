@@ -128,6 +128,10 @@ Runtime secrets go in the dashboard under the Worker's **Settings → Variables 
 type set to **Secret**: `SUPABASE_URL`, `SUPABASE_SECRET_KEY`, and `NVIDIA_API_KEY`. Each
 `wrangler deploy` replaces plain-text variables with the ones in `wrangler.jsonc` but keeps secrets.
 
+Only `main` deploys to production. Pull-request branches build as previews with `npx wrangler preview`,
+using the `previews` block in `wrangler.jsonc`. Previews get no secrets, so they show sample data and
+can't reach Supabase or call NVIDIA.
+
 To deploy from your own machine instead: `npx wrangler login`, then `npm run deploy`.
 
 > **Before adding the secrets:** the API has no authentication of its own. Put the Worker's hostname
