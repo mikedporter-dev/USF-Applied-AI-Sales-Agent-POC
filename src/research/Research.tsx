@@ -120,6 +120,7 @@ export function Research() {
                     {s.type === "rejected" && (
                       <>
                         Rejected <code>{s.tool}</code>: {s.reason}
+                        {s.attempted && <q className="rs-attempted">{s.attempted}</q>}
                       </>
                     )}
                   </li>

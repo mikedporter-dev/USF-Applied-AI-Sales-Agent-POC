@@ -179,6 +179,22 @@ describe("runResearch", () => {
   });
 });
 
+describe("tool argument handling", () => {
+  it("explains a missing accession instead of calling SEC with it, and keeps the sector when revenue fails", async () => {
+    const { events, result, nvidiaBodies } = await collect([
+      () => turn(toolCall("a", "read_8k", {}), toolCall("b", "read_8k", { accession_number: "0000000001-26-000002" })),
+      () => turn(toolCall("c", "set_company_facts", { gics_sector: "Financials", revenue_usd: 5e9, revenue_quote: "revenue was five billion dollars" })),
+      () => turn(toolCall("d", "finish", { summary: "done" })),
+    ]);
+    const toolResults = nvidiaBodies[1].messages.filter((m) => m.role === "tool").map((m) => m.content ?? "");
+    expect(toolResults[0]).toContain("accession is required");
+    expect(toolResults[1]).toContain("Jane Roe"); // accession_number accepted
+    expect(result.company.industry).toBe("Financials");
+    expect(result.company.revenueUsd).toBeUndefined();
+    expect(events).toContainEqual(expect.objectContaining({ type: "rejected", reason: expect.stringContaining("Sector kept") }));
+  });
+});
+
 describe("isValidTicker", () => {
   it.each(["CL", "BRK.B", "BF-B"])("accepts %s", (t) => expect(isValidTicker(t)).toBe(true));
   it.each(["", "cl", "TOOLONGTICKER", "CL;DROP", 42])("rejects %j", (t) => expect(isValidTicker(t)).toBe(false));

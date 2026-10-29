@@ -74,7 +74,8 @@ export async function filingDocuments(env: Env, cik: string, accession: string):
   const res = await get(env, `${base}/index.json`);
   const { directory } = (await res.json()) as { directory: { item: { name: string; size?: string }[] } };
   return directory.item
-    .filter((d) => /\.(htm|html|txt)$/i.test(d.name) && !/index/i.test(d.name))
+    // Skip index pages and the XBRL viewer pages (R1.htm, R2.htm, ...), which aren't documents.
+    .filter((d) => /\.(htm|html|txt)$/i.test(d.name) && !/index/i.test(d.name) && !/^R\d+\.htm$/i.test(d.name))
     .map((d) => ({ name: d.name, size: d.size ? Number(d.size) || undefined : undefined, url: `${base}/${d.name}` }));
 }
 

@@ -80,6 +80,12 @@
   background: var(--tier2-bg);
   color: var(--tier2);
 }
+.rs-attempted {
+  display: block;
+  margin-top: 4px;
+  font-style: italic;
+  opacity: 0.85;
+}
 .rs-step-live {
   background: transparent;
   color: var(--muted);
