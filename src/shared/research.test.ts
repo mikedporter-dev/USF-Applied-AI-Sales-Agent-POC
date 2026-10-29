@@ -4,9 +4,12 @@ import { addToCorpus, type Corpus, findPassages, htmlToText, validateFacts, vali
 const NOW = new Date("2026-10-29T12:00:00Z");
 const URL_A = "https://www.sec.gov/Archives/edgar/data/1/a.txt";
 
+const URL_B = "https://www.sec.gov/Archives/edgar/data/1/b.htm";
+
 function corpus(): Corpus {
   const c: Corpus = new Map();
-  addToCorpus(c, URL_A, "We are “leading in capabilities” such as data,\n analytics and AI across the business.", "massive");
+  addToCorpus(c, URL_A, "We are “leading in capabilities” such as data,\n analytics and AI across the business.", "massive", "2026-02-23");
+  addToCorpus(c, URL_B, "On April 30, 2026, the Board approved an expansion of the program. Charges are now estimated at $350 to $550 million.", "edgar");
   return c;
 }
 
@@ -31,8 +34,6 @@ describe("validateSignal", () => {
     [{ kind: "ai_vibes" }, "kind"],
     [{ form: "S-1" }, "form"],
     [{ filed_at: "Feb 2026" }, "filed_at"],
-    [{ filed_at: "2025-01-01" }, "outside"],
-    [{ url: "https://www.sec.gov/other.txt" }, "url"],
     [{ quote: "too short" }, "quote"],
     [{ quote: "we will invest $1 billion in generative AI next year" }, "not found"],
   ])("rejects %j", (change, reason) => {
@@ -40,19 +41,56 @@ describe("validateSignal", () => {
     expect(typeof result).toBe("string");
     expect(result).toContain(reason);
   });
+
+  it("takes url, source and filing date from the document the quote is in, not from the agent", () => {
+    const s = validateSignal({ ...valid, url: "https://www.sec.gov/made-up.txt", filed_at: "2026-01-01" }, corpus(), NOW);
+    expect(s).toMatchObject({ url: URL_A, source: "massive", filedAt: "2026-02-23" });
+
+    const fromB = validateSignal(
+      { ...valid, kind: "restructuring", form: "8-K", url: URL_A, filed_at: "2026-05-01", quote: "the Board approved an expansion of the program" },
+      corpus(),
+      NOW,
+    );
+    // B has no known filing date, so the agent's date is used; url and source come from B.
+    expect(fromB).toMatchObject({ url: URL_B, source: "edgar", filedAt: "2026-05-01" });
+  });
+
+  it("rejects evidence from a filing older than the window, using the filing's real date", () => {
+    const c = corpus();
+    const OLD = "https://www.sec.gov/Archives/edgar/data/1/old.txt";
+    addToCorpus(c, OLD, "We are exploring artificial intelligence across our plants.", "massive", "2025-03-05");
+    const result = validateSignal({ ...valid, url: OLD, filed_at: "2026-03-05", quote: "exploring artificial intelligence across our plants" }, c, NOW);
+    expect(result).toContain("outside");
+  });
+
+  it("accepts a quote shortened with an ellipsis when every piece appears in order", () => {
+    const quote = "the Board approved an expansion … estimated at $350 to $550 million";
+    expect(typeof validateSignal({ ...valid, kind: "restructuring", form: "8-K", quote }, corpus(), NOW)).toBe("object");
+    const outOfOrder = "estimated at $350 to $550 million ... the Board approved an expansion";
+    expect(typeof validateSignal({ ...valid, quote: outOfOrder }, corpus(), NOW)).toBe("string");
+  });
+
+  it("rejects an ellipsis that would stitch together passages far apart", () => {
+    const c: Corpus = new Map();
+    addToCorpus(c, URL_A, `We will not invest in new AI programs. ${"Unrelated text. ".repeat(200)} We expect strong growth in pet nutrition.`, "massive", "2026-02-23");
+    const stitched = "We will not invest in new AI programs ... We expect strong growth in pet nutrition";
+    expect(validateSignal({ ...valid, quote: stitched }, c, NOW)).toContain("not found");
+  });
 });
 
 describe("validateFacts", () => {
-  it("accepts a sector alone, or revenue with a matching quote", () => {
-    expect(validateFacts({ gics_sector: "Financials" }, corpus())).toEqual({ gicsSector: "Financials" });
+  it("accepts a sector alone, or revenue with a quote found in any text read", () => {
+    expect(validateFacts({ gics_sector: "Financials" }, corpus())).toEqual({ facts: { gicsSector: "Financials" } });
     const c = corpus();
     addToCorpus(c, URL_A, "Net sales were $20,382 in 2025", "massive");
-    expect(validateFacts({ gics_sector: "Consumer Staples", revenue_usd: 20382e6, revenue_quote: "Net sales were $20,382 in 2025", url: URL_A }, c)).toMatchObject({ revenueUsd: 20382e6 });
+    const result = validateFacts({ gics_sector: "Consumer Staples", revenue_usd: 20382e6, revenue_quote: "Net sales were $20,382 in 2025" }, c);
+    expect(result).toMatchObject({ facts: { revenueUsd: 20382e6, revenueUrl: URL_A } });
   });
 
-  it("rejects an unknown sector, or revenue without a matching quote", () => {
+  it("rejects an unknown sector, and keeps the sector when only the revenue fails", () => {
     expect(typeof validateFacts({ gics_sector: "Crypto" }, corpus())).toBe("string");
-    expect(typeof validateFacts({ gics_sector: "Financials", revenue_usd: 5e9, revenue_quote: "made lots of money", url: URL_A }, corpus())).toBe("string");
+    const result = validateFacts({ gics_sector: "Financials", revenue_usd: 5e9, revenue_quote: "made lots of money", url: URL_A }, corpus());
+    expect(result).toMatchObject({ facts: { gicsSector: "Financials" }, revenueError: expect.stringContaining("not found") });
   });
 });
 

@@ -22,10 +22,11 @@ export const GICS_SECTORS = Object.keys(INDUSTRY_FIT);
 export const QUOTE_LENGTH = { min: 20, max: 600 } as const;
 
 /** What the agent has read this run, by document URL. Quotes are checked against it. */
-export type Corpus = Map<string, { text: string; source: SignalSource }>;
+export type Corpus = Map<string, { text: string; source: SignalSource; filedAt?: string }>;
 
-export function addToCorpus(corpus: Corpus, url: string, text: string, source: SignalSource): void {
-  corpus.set(url, { text: `${corpus.get(url)?.text ?? ""}\n${text}`, source });
+export function addToCorpus(corpus: Corpus, url: string, text: string, source: SignalSource, filedAt?: string): void {
+  const prev = corpus.get(url);
+  corpus.set(url, { text: `${prev?.text ?? ""}\n${text}`, source, filedAt: filedAt ?? prev?.filedAt });
 }
 
 /** Compare text the way a reader would: case, whitespace and curly quotes don't matter. */
@@ -39,9 +40,42 @@ export function normalizeText(text: string): string {
     .trim();
 }
 
-function quoteFound(corpus: Corpus, url: string, quote: string): boolean {
-  const entry = corpus.get(url);
-  return entry !== undefined && normalizeText(entry.text).includes(normalizeText(quote));
+/** Most text an ellipsis may stand for, so a shortened quote can't stitch distant passages together. */
+const MAX_ELLIPSIS_GAP = 1000;
+
+/** A shortened quote ("A ... B") is checked piece by piece: each piece must appear, in order, close together. */
+function quoteInText(text: string, quote: string): boolean {
+  const pieces = quote
+    .split(/\[\.\.\.\]|\.\.\.|\u2026/)
+    .map((p) => normalizeText(p).replace(/^["']+|["']+$/g, "").trim())
+    .filter((p) => p.length >= 12);
+  if (pieces.length === 0) return false;
+  const haystack = normalizeText(text);
+  // Try each place the first piece occurs, so a later, closer match isn't missed.
+  for (let start = haystack.indexOf(pieces[0]); start !== -1; start = haystack.indexOf(pieces[0], start + 1)) {
+    let end = start + pieces[0].length;
+    let ok = true;
+    for (const piece of pieces.slice(1)) {
+      const at = haystack.indexOf(piece, end);
+      if (at === -1 || at - end > MAX_ELLIPSIS_GAP) {
+        ok = false;
+        break;
+      }
+      end = at + piece.length;
+    }
+    if (ok) return true;
+  }
+  return false;
+}
+
+/**
+ * The document the quote actually comes from: the one the agent named if the
+ * quote is there, otherwise any document read this run that contains it.
+ */
+export function locateQuote(corpus: Corpus, quote: string, url?: unknown): string | undefined {
+  if (typeof url === "string" && corpus.has(url) && quoteInText(corpus.get(url)!.text, quote)) return url;
+  for (const [candidate, entry] of corpus) if (quoteInText(entry.text, quote)) return candidate;
+  return undefined;
 }
 
 export interface RecordedSignal extends Signal {
@@ -51,7 +85,8 @@ export interface RecordedSignal extends Signal {
 /**
  * Validate a record_signal call from the agent. Returns the signal, or the reason
  * it was rejected so the agent can correct itself. The quote must appear in text
- * the agent actually read from that filing this run.
+ * the agent actually read this run; the url, source and (when known) filing date
+ * are taken from the document it was found in, not from the agent.
  */
 export function validateSignal(args: unknown, corpus: Corpus, asOf: Date): RecordedSignal | string {
   if (typeof args !== "object" || args === null) return "Arguments must be an object.";
@@ -63,24 +98,21 @@ export function validateSignal(args: unknown, corpus: Corpus, asOf: Date): Recor
   if (typeof a.filed_at !== "string" || !/^\d{4}-\d{2}-\d{2}$/.test(a.filed_at)) {
     return "filed_at must be the filing date as YYYY-MM-DD.";
   }
-  if (typeof a.url !== "string" || !corpus.has(a.url)) {
-    return "url must be the url of a filing or document you read this run.";
-  }
   if (typeof a.quote !== "string" || a.quote.length < QUOTE_LENGTH.min || a.quote.length > QUOTE_LENGTH.max) {
     return `quote must be ${QUOTE_LENGTH.min}-${QUOTE_LENGTH.max} characters copied from the filing.`;
   }
-  if (!quoteFound(corpus, a.url, a.quote)) {
-    return "quote was not found in the text you read from that filing. Copy it exactly.";
-  }
+  const url = locateQuote(corpus, a.quote, a.url);
+  if (!url) return "quote was not found in any text you read this run. Copy it exactly from a tool result.";
+  const doc = corpus.get(url)!;
 
   const signal: RecordedSignal = {
     kind: a.kind as SignalKind,
     summary: a.summary.trim(),
     form: a.form as FilingForm,
     section: typeof a.section === "string" && a.section.trim() ? a.section.trim() : undefined,
-    filedAt: a.filed_at,
-    source: corpus.get(a.url)!.source,
-    url: a.url,
+    filedAt: doc.filedAt ?? a.filed_at,
+    source: doc.source,
+    url,
     quote: a.quote.trim(),
   };
   if (!inWindow(signal, asOf)) return `filed_at is outside the ${WINDOW_MONTHS}-month window.`;
@@ -94,23 +126,32 @@ export interface CompanyFacts {
   revenueUrl?: string;
 }
 
-/** Validate a set_company_facts call. Revenue is optional, but if given it must be quoted. */
-export function validateFacts(args: unknown, corpus: Corpus): CompanyFacts | string {
+/**
+ * Validate a set_company_facts call. A valid sector is kept even when the revenue
+ * part fails; revenue only counts with a quote found in text read this run.
+ */
+export function validateFacts(args: unknown, corpus: Corpus): { facts: CompanyFacts; revenueError?: string } | string {
   if (typeof args !== "object" || args === null) return "Arguments must be an object.";
   const a = args as Record<string, unknown>;
   if (typeof a.gics_sector !== "string" || !GICS_SECTORS.includes(a.gics_sector)) {
     return `gics_sector must be one of: ${GICS_SECTORS.join(", ")}.`;
   }
-  if (a.revenue_usd === undefined || a.revenue_usd === null) return { gicsSector: a.gics_sector };
+  const sectorOnly = { gicsSector: a.gics_sector };
+  if (a.revenue_usd === undefined || a.revenue_usd === null) return { facts: sectorOnly };
 
   if (typeof a.revenue_usd !== "number" || !Number.isFinite(a.revenue_usd) || a.revenue_usd <= 0) {
-    return "revenue_usd must be a positive number of US dollars (not millions).";
+    return { facts: sectorOnly, revenueError: "revenue_usd must be a positive number of US dollars (not millions)." };
   }
-  if (typeof a.url !== "string" || !corpus.has(a.url)) return "url must be the url of the filing you took revenue from.";
-  if (typeof a.revenue_quote !== "string" || !quoteFound(corpus, a.url, a.revenue_quote)) {
-    return "revenue_quote was not found in the text you read from that filing. Copy it exactly.";
+  const url = typeof a.revenue_quote === "string" ? locateQuote(corpus, a.revenue_quote, a.url) : undefined;
+  if (!url) {
+    return {
+      facts: sectorOnly,
+      revenueError: "revenue_quote was not found in any text you read this run. Copy it exactly from a tool result.",
+    };
   }
-  return { gicsSector: a.gics_sector, revenueUsd: a.revenue_usd, revenueQuote: a.revenue_quote, revenueUrl: a.url };
+  return {
+    facts: { gicsSector: a.gics_sector, revenueUsd: a.revenue_usd, revenueQuote: a.revenue_quote as string, revenueUrl: url },
+  };
 }
 
 export interface ResearchResult {
@@ -144,7 +185,7 @@ export type ResearchEvent =
   | { type: "status"; message: string }
   | { type: "tool"; name: string; detail: string }
   | { type: "signal"; signal: RecordedSignal }
-  | { type: "rejected"; tool: string; reason: string }
+  | { type: "rejected"; tool: string; reason: string; attempted?: string }
   | { type: "result"; result: ResearchResult }
   | { type: "error"; message: string };
 

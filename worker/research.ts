@@ -117,7 +117,7 @@ function toolDefinitions(withEdgar: boolean): ToolDefinition[] {
         form: { type: "string", enum: FILING_FORMS },
         section: { type: "string", description: 'e.g. "Item 1 Business", "Item 5.02", "MD&A"' },
         filed_at: { type: "string", description: "filing date, YYYY-MM-DD" },
-        url: { type: "string", description: "url of the filing or document you read it in" },
+        url: { type: "string", description: "url of the filing or document you read it in; the quote is what's checked" },
         quote: { type: "string", description: "20-600 characters copied exactly from that text" },
       },
       ["kind", "summary", "form", "filed_at", "url", "quote"],
@@ -151,7 +151,8 @@ How to work:
       : ""
   }
 - Call several tools in one turn when they don't depend on each other, e.g. list_8k_filings, list_new_officers and search_10k together.
-- Record each signal as soon as you have the evidence for it. Don't save them for the end: research stops at the turn limit, and anything unrecorded is lost.
+- Record each signal as soon as you have the evidence for it, before reading the next filing. Don't save them for the end: research stops at the turn limit, and anything unrecorded is lost.
+- 8-K items map to signals: Item 5.02 is a leadership_change (officers only), 2.01 an acquisition, 2.05 a restructuring. Record each one you read.
 - Follow leads. If a filing mentions an AI pilot, look for whether later filings report results.
 - Don't repeat a search you've already run; use the passages it returned.
 - Record one signal per distinct fact; don't split one announcement into several.
@@ -203,6 +204,19 @@ export async function runResearch(env: Env, ticker: string, emit: Emit, now = ne
   const eightKs = () => once("8k", () => massive.eightKs(env, ticker, windowStart));
   const tenK = () => once("10k", () => massive.tenKSections(env, ticker, windowStart));
   const edgarDocText = (url: string) => once(`doc:${url}`, () => edgar.documentText(env, url));
+  const edgarFilings = () => once("edgar", () => edgar.recentFilings(env, profile.cik, ["10-Q", "8-K"], windowStart));
+  /** Filing date of an EDGAR document, from the filing folder it sits in. */
+  async function edgarFilingDate(url: string): Promise<string | undefined> {
+    const filings = await edgarFilings().catch(() => []);
+    return filings.find((f) => url.startsWith(`${f.folderUrl}/`))?.filingDate;
+  }
+
+  /** The model sometimes names this argument accession_number; accept either. */
+  const accessionArg = (args: Record<string, unknown>) => {
+    const value = args.accession ?? args.accession_number;
+    return typeof value === "string" && /^\d{10}-\d{2}-\d{6}$/.test(value.trim()) ? value.trim() : undefined;
+  };
+  const ACCESSION_HELP = fail("accession is required, like 0000021665-26-000022: copy it from list_8k_filings or list_edgar_filings.");
 
   async function tenKSection(section: string) {
     const sections = await tenK();
@@ -224,10 +238,12 @@ export async function runResearch(env: Env, ticker: string, emit: Emit, now = ne
         );
       }
       case "read_8k": {
-        const filing = (await eightKs()).find((f) => f.accession === args.accession);
+        const accession = accessionArg(args);
+        if (!accession) return ACCESSION_HELP;
+        const filing = (await eightKs()).find((f) => f.accession === accession);
         if (!filing) return fail("No 8-K with that accession in the window.");
         const text = filing.text.slice(0, CHUNK_CHARS * 2);
-        addToCorpus(corpus, filing.url, text, "massive");
+        addToCorpus(corpus, filing.url, text, "massive", filing.filingDate);
         await emit({ type: "tool", name, detail: `8-K filed ${filing.filingDate}` });
         return ok({ filing_date: filing.filingDate, url: filing.url, text });
       }
@@ -240,7 +256,7 @@ export async function runResearch(env: Env, ticker: string, emit: Emit, now = ne
           return REPEAT_NOTE;
         }
         const passages = findPassages(sec.text, terms);
-        for (const p of passages) addToCorpus(corpus, sec.url, p, "massive");
+        for (const p of passages) addToCorpus(corpus, sec.url, p, "massive", sec.filingDate);
         await emit({ type: "tool", name, detail: `10-K ${sec.section}: "${terms.join('", "')}" → ${passages.length} passages` });
         return ok({ filing_date: sec.filingDate, url: sec.url, passages });
       }
@@ -250,26 +266,28 @@ export async function runResearch(env: Env, ticker: string, emit: Emit, now = ne
         const part = Math.max(1, Number(args.part) || 1);
         const parts = Math.max(1, Math.ceil(sec.text.length / CHUNK_CHARS));
         const text = sec.text.slice((part - 1) * CHUNK_CHARS, part * CHUNK_CHARS);
-        addToCorpus(corpus, sec.url, text, "massive");
+        addToCorpus(corpus, sec.url, text, "massive", sec.filingDate);
         await emit({ type: "tool", name, detail: `10-K ${sec.section}, part ${part} of ${parts}` });
         return ok({ filing_date: sec.filingDate, url: sec.url, part, parts, text });
       }
       case "list_new_officers": {
         const list = await once("form3", () => massive.form3s(env, profile.cik, windowStart));
         for (const f of list) {
-          addToCorpus(corpus, f.url, `${f.ownerName}; ${f.officerTitle ?? "not an officer"}; filed ${f.filingDate}`, "massive");
+          addToCorpus(corpus, f.url, `${f.ownerName}; ${f.officerTitle ?? "not an officer"}; filed ${f.filingDate}`, "massive", f.filingDate);
         }
         await emit({ type: "tool", name, detail: `${list.length} Form 3 filings` });
         return ok(list.map((f) => ({ filing_date: f.filingDate, owner: f.ownerName, officer_title: f.officerTitle, is_officer: f.isOfficer, url: f.url })));
       }
       case "list_edgar_filings": {
-        const list = await once("edgar", () => edgar.recentFilings(env, profile.cik, ["10-Q", "8-K"], windowStart));
+        const list = await edgarFilings();
         await emit({ type: "tool", name, detail: `${list.length} 10-Q and 8-K filings on EDGAR` });
         return ok(list.map((f) => ({ form: f.form, filing_date: f.filingDate, accession: f.accession, main_document: `${f.folderUrl}/${f.primaryDocument}` })));
       }
       case "list_filing_documents": {
-        const docs = await edgar.filingDocuments(env, profile.cik, String(args.accession));
-        await emit({ type: "tool", name, detail: `${docs.length} documents in ${args.accession}` });
+        const accession = accessionArg(args);
+        if (!accession) return ACCESSION_HELP;
+        const docs = await edgar.filingDocuments(env, profile.cik, accession);
+        await emit({ type: "tool", name, detail: `${docs.length} documents in ${accession}` });
         return ok(docs);
       }
       case "read_edgar_document": {
@@ -288,14 +306,14 @@ export async function runResearch(env: Env, ticker: string, emit: Emit, now = ne
         const name_ = url.split("/").pop();
         if (terms.length) {
           const passages = findPassages(text, terms);
-          for (const p of passages) addToCorpus(corpus, url, p, "edgar");
+          for (const p of passages) addToCorpus(corpus, url, p, "edgar", await edgarFilingDate(url));
           await emit({ type: "tool", name, detail: `${name_}: "${terms.join('", "')}" → ${passages.length} passages` });
           return ok({ url, passages });
         }
         const part = Math.max(1, Number(args.part) || 1);
         const parts = Math.max(1, Math.ceil(text.length / CHUNK_CHARS));
         const chunk = text.slice((part - 1) * CHUNK_CHARS, part * CHUNK_CHARS);
-        addToCorpus(corpus, url, chunk, "edgar");
+        addToCorpus(corpus, url, chunk, "edgar", await edgarFilingDate(url));
         await emit({ type: "tool", name, detail: `${name_}, part ${part} of ${parts}` });
         return ok({ url, part, parts, text: chunk });
       }
@@ -305,18 +323,28 @@ export async function runResearch(env: Env, ticker: string, emit: Emit, now = ne
           await emit({ type: "rejected", tool: name, reason: result });
           return fail(result);
         }
-        facts = result;
+        // Keep revenue already verified by an earlier call if this one only sets the sector.
+        facts = result.facts.revenueUsd || !facts?.revenueUsd ? result.facts : { ...facts, gicsSector: result.facts.gicsSector };
         await emit({
           type: "tool",
           name,
-          detail: `${result.gicsSector}${result.revenueUsd ? ` · revenue $${(result.revenueUsd / 1e9).toFixed(1)}B` : ""}`,
+          detail: `${facts.gicsSector}${facts.revenueUsd ? ` · revenue $${(facts.revenueUsd / 1e9).toFixed(1)}B` : ""}`,
         });
+        if (result.revenueError) {
+          await emit({
+            type: "rejected",
+            tool: name,
+            reason: `Sector kept; revenue not: ${result.revenueError}`,
+            attempted: typeof args.revenue_quote === "string" ? args.revenue_quote : undefined,
+          });
+          return ok({ recorded_sector: true, revenue_error: result.revenueError });
+        }
         return ok({ recorded: true });
       }
       case "record_signal": {
         const result = validateSignal(args, corpus, now);
         if (typeof result === "string") {
-          await emit({ type: "rejected", tool: name, reason: result });
+          await emit({ type: "rejected", tool: name, reason: result, attempted: typeof args.quote === "string" ? args.quote : undefined });
           return fail(result);
         }
         signals.push(result);

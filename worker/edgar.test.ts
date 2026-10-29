@@ -38,10 +38,12 @@ describe("edgar", () => {
     expect(requests[0].userAgent).toBe("Test Dev test@example.com");
   });
 
-  it("lists a filing's documents without index pages", async () => {
+  it("lists a filing's documents without index or XBRL viewer pages", async () => {
     stub({
       "https://www.sec.gov/Archives/edgar/data/21665/000002166526000041/index.json": {
-        directory: { item: [{ name: "ex99.htm", size: "51234" }, { name: "0000021665-26-000041-index.htm" }, { name: "R1.xml" }] },
+        directory: {
+          item: [{ name: "ex99.htm", size: "51234" }, { name: "0000021665-26-000041-index.htm" }, { name: "R1.xml" }, { name: "R1.htm" }],
+        },
       },
     });
     const docs = await filingDocuments(env, "0000021665", "0000021665-26-000041");
