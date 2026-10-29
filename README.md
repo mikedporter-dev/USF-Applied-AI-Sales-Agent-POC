@@ -106,8 +106,9 @@ read with these tools: list and read 8-Ks, search and read 10-K sections, list F
 `SEC_USER_AGENT` is set, list EDGAR filings and read their documents (10-Q MD&A, 8-K exhibits). It
 records evidence with `record_signal`, and code rejects any quote that isn't in text the agent actually
 read, or any filing outside the 12-month window. Scoring uses `src/shared/scoring.ts`. A run is capped
-at 14 model turns and 6 EDGAR documents, and progress streams to the page as newline-delimited JSON
-from `POST /api/research`.
+at 16 model turns and 6 EDGAR documents. In the last 4 turns the agent is reminded to record what it
+has; if it still hasn't finished, it gets 2 wrap-up turns in which it can only record findings and
+finish. Progress streams to the page as newline-delimited JSON from `POST /api/research`.
 
 It needs the `NVIDIA_API_KEY` and `MASSIVE_API_KEY` secrets. `SEC_USER_AGENT` is optional: SEC
 requires a name and contact email on each request, e.g. `Jane Doe jane@example.com`, so it's kept as a

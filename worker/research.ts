@@ -23,7 +23,12 @@ import { type AgentMessage, chatWithTools, type ToolDefinition } from "./nvidia"
 // text the model actually read, and scores the result with the app's own rules.
 
 /** Model turns per run. Each turn is one NVIDIA call plus the tools it asks for. */
-export const MAX_TURNS = 14;
+export const MAX_TURNS = 16;
+/** Extra turns after MAX_TURNS in which the agent can only record findings and finish. */
+export const WRAP_UP_TURNS = 2;
+/** When this many turns are left, the agent is reminded to record what it has. */
+const REMIND_AT = 4;
+const WRAP_UP_TOOLS = new Set(["record_signal", "set_company_facts", "finish"]);
 /** EDGAR documents fetched per run, to bound time and CPU. */
 const MAX_EDGAR_READS = 6;
 /** Characters of text returned per read, so tool results stay a manageable size. */
@@ -145,12 +150,15 @@ How to work:
 - Use EDGAR for what Massive lacks: 10-Q MD&A, and 8-K exhibits such as earnings releases and investor presentations. You can read ${MAX_EDGAR_READS} EDGAR documents, so choose them.`
       : ""
   }
+- Call several tools in one turn when they don't depend on each other, e.g. list_8k_filings, list_new_officers and search_10k together.
+- Record each signal as soon as you have the evidence for it. Don't save them for the end: research stops at the turn limit, and anything unrecorded is lost.
 - Follow leads. If a filing mentions an AI pilot, look for whether later filings report results.
+- Don't repeat a search you've already run; use the passages it returned.
 - Record one signal per distinct fact; don't split one announcement into several.
 - Copy each quote exactly from text a tool returned to you. A rejected signal tells you why; fix it and try again.
-- Call set_company_facts once with the GICS sector and, if you can find it in a filing, total annual revenue (usually in MD&A).
+- Call set_company_facts early, once you know the GICS sector and, if a filing states it, total annual revenue (usually in MD&A).
 - When you've covered the 8-Ks, new officers and the 10-K's AI language, call finish. Don't speculate beyond the filings.
-You have ${MAX_TURNS} turns.`;
+You have ${MAX_TURNS} turns, then a short wrap-up in which you can only record findings and finish.`;
 }
 
 const ok = (value: unknown) => JSON.stringify(value);
@@ -176,6 +184,15 @@ export async function runResearch(env: Env, ticker: string, emit: Emit, now = ne
   let facts: CompanyFacts | undefined;
   let summary: string | undefined;
   let edgarReads = 0;
+  const searchesRun = new Set<string>();
+  /** True if this exact search already ran this session; repeats waste the agent's turns. */
+  const repeated = (where: string, terms: string[]) => {
+    const key = `${where}|${terms.map((t) => t.toLowerCase().trim()).sort().join("|")}`;
+    if (searchesRun.has(key)) return true;
+    searchesRun.add(key);
+    return false;
+  };
+  const REPEAT_NOTE = ok({ note: "You already ran this exact search. Use the passages it returned, or record what you found." });
 
   // Each dataset is fetched at most once per run.
   const cache = new Map<string, Promise<unknown>>();
@@ -218,6 +235,10 @@ export async function runResearch(env: Env, ticker: string, emit: Emit, now = ne
         const sec = await tenKSection(String(args.section));
         if (!sec) return fail("No 10-K section like that in the window.");
         const terms = Array.isArray(args.terms) ? args.terms.map(String) : [];
+        if (repeated(sec.url + sec.section, terms)) {
+          await emit({ type: "tool", name, detail: `10-K ${sec.section}: repeat search skipped` });
+          return REPEAT_NOTE;
+        }
         const passages = findPassages(sec.text, terms);
         for (const p of passages) addToCorpus(corpus, sec.url, p, "massive");
         await emit({ type: "tool", name, detail: `10-K ${sec.section}: "${terms.join('", "')}" → ${passages.length} passages` });
@@ -253,6 +274,11 @@ export async function runResearch(env: Env, ticker: string, emit: Emit, now = ne
       }
       case "read_edgar_document": {
         const url = String(args.url);
+        const searchTerms = Array.isArray(args.terms) ? args.terms.map(String) : [];
+        if (searchTerms.length && repeated(url, searchTerms)) {
+          await emit({ type: "tool", name, detail: `${url.split("/").pop()}: repeat search skipped` });
+          return REPEAT_NOTE;
+        }
         if (!cache.has(`doc:${url}`)) {
           if (edgarReads >= MAX_EDGAR_READS) return fail(`You've used all ${MAX_EDGAR_READS} EDGAR document reads.`);
           edgarReads++;
@@ -313,14 +339,16 @@ Massive reports: industry "${profile.sicDescription ?? "unknown"}" (SIC), ${prof
   ];
 
   let stopReason: ResearchResult["stopReason"] = "step_limit";
-  for (let turn = 1; turn <= MAX_TURNS && !summary; turn++) {
-    await emit({ type: "status", message: `Thinking (turn ${turn} of ${MAX_TURNS})` });
-    const reply = await chatWithTools(env, messages, tools, { maxTokens: 6144 });
+
+  /** One model turn: call the model, then run each tool it asks for (only `allowed` ones, if given). */
+  async function takeTurn(label: string, turnTools: ToolDefinition[], allowed?: Set<string>) {
+    await emit({ type: "status", message: label });
+    const reply = await chatWithTools(env, messages, turnTools, { maxTokens: 6144 });
 
     if (reply.toolCalls.length === 0) {
       messages.push({ role: "assistant", content: reply.content || "(no answer)" });
       messages.push({ role: "user", content: "Continue by calling a tool. Call finish when you're done." });
-      continue;
+      return;
     }
 
     messages.push({ role: "assistant", content: reply.content || null, tool_calls: reply.toolCalls });
@@ -332,10 +360,12 @@ Massive reports: industry "${profile.sicDescription ?? "unknown"}" (SIC), ${prof
       } catch {
         args = {};
       }
-      if (call.function.name === "finish") {
+      if (allowed && !allowed.has(call.function.name)) {
+        result = fail("Research time is up: only record_signal, set_company_facts and finish are available.");
+      } else if (call.function.name === "finish") {
         summary = typeof args.summary === "string" ? args.summary : "";
         stopReason = "finished";
-        await emit({ type: "status", message: `Finished after ${turn} turns with ${signals.length} signals` });
+        await emit({ type: "status", message: `Finished with ${signals.length} signals` });
         result = ok({ finished: true });
       } else {
         try {
@@ -347,6 +377,28 @@ Massive reports: industry "${profile.sicDescription ?? "unknown"}" (SIC), ${prof
       }
       messages.push({ role: "tool", tool_call_id: call.id, content: result });
     }
+  }
+
+  for (let turn = 1; turn <= MAX_TURNS && summary === undefined; turn++) {
+    await takeTurn(`Thinking (turn ${turn} of ${MAX_TURNS})`, tools);
+    const left = MAX_TURNS - turn;
+    if (summary === undefined && left > 0 && left <= REMIND_AT) {
+      messages.push({
+        role: "user",
+        content: `${left} turn${left === 1 ? "" : "s"} left. Record the signals you have evidence for with record_signal, call set_company_facts if you haven't, then finish.`,
+      });
+    }
+  }
+
+  // Out of turns: give the agent a short wrap-up in which it can only record what it found.
+  const wrapUpTools = tools.filter((t) => WRAP_UP_TOOLS.has(t.function.name));
+  for (let turn = 1; turn <= WRAP_UP_TURNS && summary === undefined; turn++) {
+    messages.push({
+      role: "user",
+      content:
+        "Research time is up. Record every signal you found evidence for with record_signal, call set_company_facts if you haven't, then call finish. Only those tools are available now.",
+    });
+    await takeTurn(`Wrapping up (${turn} of ${WRAP_UP_TURNS})`, wrapUpTools, WRAP_UP_TOOLS);
   }
 
   // Scoring uses the app's own rules. S&P 1500 membership isn't checked here and
