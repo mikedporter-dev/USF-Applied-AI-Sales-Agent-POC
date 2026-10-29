@@ -112,7 +112,7 @@ export interface AccountsResponse {
 /** GET /api/health */
 export interface HealthResponse {
   ok: boolean;
-  integrations: { nvidia: boolean; supabase: boolean };
+  integrations: { nvidia: boolean; supabase: boolean; massive: boolean; edgar: boolean };
 }
 
 /** POST /api/contacts/approval */

@@ -1,0 +1,135 @@
+.rs {
+  min-height: 100vh;
+}
+.rs-main {
+  width: 100%;
+  max-width: var(--max);
+  margin: 0 auto;
+  padding: 36px var(--gutter) 64px;
+}
+.rs-main h1 {
+  font-size: 30px;
+}
+.rs-lede {
+  max-width: 640px;
+  margin-top: 8px;
+  color: var(--text-2);
+}
+.rs-form {
+  display: flex;
+  gap: 10px;
+  margin-top: 24px;
+}
+.rs-input {
+  width: 220px;
+  height: 42px;
+  padding: 0 14px;
+  border: 1px solid var(--border-strong);
+  border-radius: 8px;
+  font: inherit;
+  font-family: var(--mono);
+  text-transform: uppercase;
+}
+.rs-input:focus {
+  outline: 2px solid var(--blue);
+  outline-offset: 1px;
+}
+.rs-error {
+  margin-top: 12px;
+  color: #c2410c;
+}
+.rs-grid {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1.3fr);
+  gap: 16px;
+  margin-top: 28px;
+  align-items: start;
+}
+.rs-panel {
+  display: grid;
+  gap: 14px;
+  padding: 20px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+}
+.rs-steps {
+  display: grid;
+  gap: 6px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  font-size: 13px;
+}
+.rs-step {
+  padding: 6px 10px;
+  border-radius: 6px;
+  background: var(--surface-2);
+  color: var(--text-2);
+  overflow-wrap: anywhere;
+}
+.rs-step code {
+  font-family: var(--mono);
+  font-size: 12px;
+  color: var(--text);
+}
+.rs-step-status {
+  background: transparent;
+  color: var(--muted);
+}
+.rs-step-rejected {
+  background: var(--tier2-bg);
+  color: var(--tier2);
+}
+.rs-step-live {
+  background: transparent;
+  color: var(--muted);
+  font-style: italic;
+}
+.rs-result {
+  display: grid;
+  gap: 12px;
+  font-size: 14px;
+}
+.rs-result h2 {
+  font-size: 22px;
+}
+.rs-result-head p {
+  margin-top: 4px;
+  font-size: 13px;
+  color: var(--muted);
+}
+.rs-result .detail-scores {
+  margin: 0;
+}
+.rs-caveats {
+  display: grid;
+  gap: 4px;
+  margin: 0;
+  padding-left: 18px;
+  font-size: 13px;
+  color: var(--muted);
+}
+.rs-quote {
+  margin: 2px 0;
+  padding-left: 10px;
+  border-left: 2px solid var(--border-strong);
+  font-size: 13px;
+  font-style: italic;
+  color: var(--text-2);
+}
+.evidence-meta a {
+  color: var(--blue);
+}
+
+@media (max-width: 900px) {
+  .rs-grid {
+    grid-template-columns: 1fr;
+  }
+  .rs-form {
+    flex-wrap: wrap;
+  }
+  .rs-input {
+    flex: 1 1 160px;
+    width: auto;
+  }
+}

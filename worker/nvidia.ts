@@ -10,11 +10,50 @@ export interface ChatMessage {
   content: string;
 }
 
+export interface ToolCall {
+  id: string;
+  type: "function";
+  function: { name: string; arguments: string };
+}
+
+/** A conversation turn in an agent loop, including tool calls and their results. */
+export type AgentMessage =
+  | ChatMessage
+  | { role: "assistant"; content: string | null; tool_calls: ToolCall[] }
+  | { role: "tool"; tool_call_id: string; content: string };
+
+export interface ToolDefinition {
+  type: "function";
+  function: { name: string; description: string; parameters: Record<string, unknown> };
+}
+
 interface ChatCompletion {
   choices: {
     finish_reason?: string;
-    message: { content: string | null; reasoning_content?: string | null };
+    message: { content: string | null; reasoning_content?: string | null; tool_calls?: ToolCall[] };
   }[];
+}
+
+export interface AgentTurn {
+  /** Final-answer text with any reasoning removed. */
+  content: string;
+  toolCalls: ToolCall[];
+  finishReason?: string;
+}
+
+/** One turn of an agent loop: the model either calls tools or answers. */
+export async function chatWithTools(
+  env: Env,
+  messages: AgentMessage[],
+  tools: ToolDefinition[],
+  options: ChatOptions = {},
+): Promise<AgentTurn> {
+  const choice = await complete(env, { messages, tools }, options);
+  return {
+    content: finalAnswer(choice?.message.content),
+    toolCalls: choice?.message.tool_calls ?? [],
+    finishReason: choice?.finish_reason,
+  };
 }
 
 /** Sampling NVIDIA recommends for Nemotron 3.5 Lightning. */
@@ -44,11 +83,11 @@ export function finalAnswer(content: string | null | undefined): string {
     .trim();
 }
 
-export async function chat(
+async function complete(
   env: Env,
-  messages: ChatMessage[],
-  { maxTokens = 8192, thinking = true }: ChatOptions = {},
-): Promise<string> {
+  body: { messages: unknown[]; tools?: ToolDefinition[] },
+  { maxTokens = 8192, thinking = true }: ChatOptions,
+): Promise<ChatCompletion["choices"][number] | undefined> {
   if (!env.NVIDIA_API_KEY) throw new Error("NVIDIA_API_KEY is not configured");
 
   const res = await fetch(`${env.NVIDIA_BASE_URL}/chat/completions`, {
@@ -59,7 +98,8 @@ export async function chat(
     },
     body: JSON.stringify({
       model: env.NVIDIA_MODEL,
-      messages,
+      ...body,
+      ...(body.tools ? { tool_choice: "auto" } : {}),
       max_tokens: maxTokens,
       ...SAMPLING,
       ...(thinking ? {} : { chat_template_kwargs: { enable_thinking: false } }),
@@ -67,9 +107,12 @@ export async function chat(
     signal: AbortSignal.timeout(TIMEOUT_MS),
   });
   if (!res.ok) throw new Error(`NVIDIA API ${res.status}: ${await res.text()}`);
+  return ((await res.json()) as ChatCompletion).choices[0];
+}
 
-  const data = (await res.json()) as ChatCompletion;
-  const choice = data.choices[0];
+export async function chat(env: Env, messages: ChatMessage[], options: ChatOptions = {}): Promise<string> {
+  const maxTokens = options.maxTokens ?? 8192;
+  const choice = await complete(env, { messages }, options);
   const answer = finalAnswer(choice?.message.content);
   if (!answer && choice?.finish_reason === "length") {
     throw new Error(`The model used all ${maxTokens} tokens before answering. Raise max_tokens.`);
