@@ -3,7 +3,7 @@ import { SAMPLE_ACCOUNTS, SAMPLE_AS_OF } from "../src/shared/sampleData";
 import { scoreAccounts } from "../src/shared/scoring";
 import type { AccountsResponse, ApprovalResponse } from "../src/shared/types";
 import type { Env } from "./env";
-import { draftOutreachBrief } from "./nvidia";
+import { chat, draftOutreachBrief, parseChatMessage } from "./nvidia";
 import * as supabase from "./supabase";
 
 const json = (body: unknown, status = 200) =>
@@ -51,6 +51,22 @@ async function handleApi(request: Request, env: Env, path: string): Promise<Resp
     if (typeof parsed === "string") return json({ error: parsed }, 400);
     const body: ApprovalResponse = { contacts: await supabase.setApproval(env, parsed) };
     return json(body);
+  }
+
+  // Plain chat with the NVIDIA model. GET /api/chat?message=... is handy from a browser;
+  // POST {"message": "..."} for code.
+  if (path === "/api/chat" && (request.method === "GET" || request.method === "POST")) {
+    if (!env.NVIDIA_API_KEY) {
+      return json({ error: "The NVIDIA API key isn't configured yet. Set the NVIDIA_API_KEY secret." }, 503);
+    }
+    const raw =
+      request.method === "GET"
+        ? new URL(request.url).searchParams.get("message")
+        : ((await request.json().catch(() => null)) as { message?: unknown } | null)?.message;
+    const parsed = parseChatMessage(raw);
+    if (typeof parsed === "string") return json({ error: parsed }, 400);
+    const reply = await chat(env, [{ role: "user", content: parsed.message }]);
+    return json({ model: env.NVIDIA_MODEL, reply });
   }
 
   const brief = path.match(/^\/api\/accounts\/(\d{10})\/brief$/);

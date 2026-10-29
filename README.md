@@ -89,7 +89,15 @@ npx wrangler secret put SUPABASE_URL
 npx wrangler secret put SUPABASE_SERVICE_ROLE_KEY
 ```
 
-The model is set by `NVIDIA_MODEL` in `wrangler.jsonc`.
+The model is set by `NVIDIA_MODEL` in `wrangler.jsonc` (currently `nvidia/nemotron-3.5-lightning-30b-a3b`,
+called at `https://integrate.api.nvidia.com/v1`).
+
+### Chat endpoint
+
+`/api/chat` sends one message to the NVIDIA model and returns its final answer, with any reasoning
+removed. From a browser (after the Cloudflare Access login):
+`/api/chat?message=Hello`. From code: `POST /api/chat` with `{"message": "Hello"}`. Both return
+`{"model": "...", "reply": "..."}`. Without the `NVIDIA_API_KEY` secret it returns a 503.
 
 ### Database
 

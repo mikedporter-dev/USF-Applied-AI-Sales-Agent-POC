@@ -14,7 +14,7 @@
   },
   "vars": {
     "NVIDIA_BASE_URL": "https://integrate.api.nvidia.com/v1",
-    "NVIDIA_MODEL": "meta/llama-3.3-70b-instruct"
+    "NVIDIA_MODEL": "nvidia/nemotron-3.5-lightning-30b-a3b"
   },
   // Secrets (set with `wrangler secret put <NAME>`, or .dev.vars locally):
   //   NVIDIA_API_KEY, SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY
