@@ -17,7 +17,7 @@ const env = {
 
 const massive: Record<string, unknown> = {
   "/v3/reference/tickers/TEST": {
-    results: { ticker: "TEST", name: "Test Corp", cik: "0000000001", sic_description: "SERVICES", total_employees: 20000 },
+    results: { ticker: "TEST", name: "Test Corp", cik: "0000000001", sic_code: "6311", sic_description: "LIFE INSURANCE", total_employees: 20000 },
   },
   "/stocks/filings/10-K/vX/sections": {
     results: [
@@ -107,7 +107,6 @@ describe("runResearch", () => {
             url: EIGHTK_URL,
             quote: "appointed Jane Roe as Chief Data Officer",
           }),
-          toolCall("g", "set_company_facts", { gics_sector: "Financials" }),
         ),
       () => turn(toolCall("h", "finish", { summary: "One AI commitment and a new CDO." })),
     ]);
@@ -128,7 +127,7 @@ describe("runResearch", () => {
 
     // Tool results are sent back to the model, matched to each call.
     const lastRequest = nvidiaBodies.at(-1)!;
-    expect(lastRequest.messages.filter((m) => m.role === "tool")).toHaveLength(7);
+    expect(lastRequest.messages.filter((m) => m.role === "tool")).toHaveLength(6);
     // Without SEC_USER_AGENT, EDGAR tools aren't offered.
     expect(lastRequest.tools.map((t) => t.function.name)).not.toContain("read_edgar_document");
   });
@@ -143,7 +142,7 @@ describe("runResearch", () => {
     expect(userText(MAX_TURNS)).toContain("Research time is up");
 
     // Wrap-up turns only offer the recording tools, and refuse anything else.
-    expect(nvidiaBodies[MAX_TURNS].tools.map((t) => t.function.name).sort()).toEqual(["finish", "record_signal", "set_company_facts"]);
+    expect(nvidiaBodies[MAX_TURNS].tools.map((t) => t.function.name).sort()).toEqual(["finish", "record_signal"]);
     const lastToolResult = nvidiaBodies.at(-1)!.messages.filter((m) => m.role === "tool").at(-1)!;
     expect(lastToolResult.content).toContain("only record_signal");
     expect(events.filter((e) => e.type === "status" && e.message.startsWith("Wrapping up"))).toHaveLength(WRAP_UP_TURNS);
@@ -180,18 +179,40 @@ describe("runResearch", () => {
 });
 
 describe("tool argument handling", () => {
-  it("explains a missing accession instead of calling SEC with it, and keeps the sector when revenue fails", async () => {
-    const { events, result, nvidiaBodies } = await collect([
+  it("explains a missing accession instead of calling SEC with it", async () => {
+    const { nvidiaBodies } = await collect([
       () => turn(toolCall("a", "read_8k", {}), toolCall("b", "read_8k", { accession_number: "0000000001-26-000002" })),
-      () => turn(toolCall("c", "set_company_facts", { gics_sector: "Financials", revenue_usd: 5e9, revenue_quote: "revenue was five billion dollars" })),
-      () => turn(toolCall("d", "finish", { summary: "done" })),
+      () => turn(toolCall("c", "finish", { summary: "done" })),
     ]);
     const toolResults = nvidiaBodies[1].messages.filter((m) => m.role === "tool").map((m) => m.content ?? "");
     expect(toolResults[0]).toContain("accession is required");
     expect(toolResults[1]).toContain("Jane Roe"); // accession_number accepted
+  });
+});
+
+describe("company facts", () => {
+  it("fills sector from the SIC code and revenue from SEC XBRL, not from the agent", async () => {
+    const xbrl = "/api/xbrl/companyconcept/CIK0000000001/us-gaap/Revenues.json";
+    massive[xbrl] = { units: { USD: [{ start: "2025-01-01", end: "2025-12-31", val: 5.2e9, form: "10-K", filed: "2026-02-20" }] } };
+    try {
+      const nvidiaBodies = mockFetch([() => turn(toolCall("a", "finish", { summary: "done" }))]);
+      const result = await runResearch({ ...env, SEC_USER_AGENT: "Test Dev test@example.com" }, "TEST", async () => {}, NOW);
+      expect(result.company.industry).toBe("Financials");
+      expect(result.company.revenueUsd).toBe(5.2e9);
+      expect(result.facts?.sectorSource).toContain("SIC 6311");
+      expect(result.facts?.revenueSource).toContain("fiscal year ended 2025-12-31");
+      expect(nvidiaBodies[0].messages.find((m) => m.role === "user")?.content).toContain("Financials (from SIC code) · revenue $5.2B");
+      expect(nvidiaBodies[0].tools.map((t) => t.function.name)).not.toContain("set_company_facts");
+    } finally {
+      delete massive[xbrl];
+    }
+  });
+
+  it("leaves revenue empty without SEC access", async () => {
+    mockFetch([() => turn(toolCall("a", "finish", { summary: "done" }))]);
+    const result = await runResearch(env, "TEST", async () => {}, NOW);
     expect(result.company.industry).toBe("Financials");
     expect(result.company.revenueUsd).toBeUndefined();
-    expect(events).toContainEqual(expect.objectContaining({ type: "rejected", reason: expect.stringContaining("Sector kept") }));
   });
 });
 

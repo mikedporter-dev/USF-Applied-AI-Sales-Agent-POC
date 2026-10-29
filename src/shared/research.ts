@@ -1,4 +1,4 @@
-import { INDUSTRY_FIT, inWindow, WINDOW_MONTHS } from "./scoring";
+import { inWindow, WINDOW_MONTHS } from "./scoring";
 import type { FilingForm, Scores, Signal, SignalKind, SignalSource, Tier } from "./types";
 
 // The account research agent: shared types and the checks every finding must
@@ -16,17 +16,27 @@ export const SIGNAL_KINDS: readonly SignalKind[] = [
 
 export const FILING_FORMS: readonly FilingForm[] = ["10-K", "10-Q", "8-K", "8-K EX-99", "Form 3"];
 
-export const GICS_SECTORS = Object.keys(INDUSTRY_FIT);
-
 /** Quotes must be long enough to be checkable and short enough to be a quote. */
-export const QUOTE_LENGTH = { min: 20, max: 600 } as const;
+export const QUOTE_LENGTH = { min: 20, max: 1500 } as const;
+
+/** What we know about a document independently of the agent. */
+export interface DocumentFacts {
+  source: SignalSource;
+  filedAt?: string;
+  form?: FilingForm;
+}
 
 /** What the agent has read this run, by document URL. Quotes are checked against it. */
-export type Corpus = Map<string, { text: string; source: SignalSource; filedAt?: string }>;
+export type Corpus = Map<string, DocumentFacts & { text: string }>;
 
-export function addToCorpus(corpus: Corpus, url: string, text: string, source: SignalSource, filedAt?: string): void {
+export function addToCorpus(corpus: Corpus, url: string, text: string, facts: DocumentFacts): void {
   const prev = corpus.get(url);
-  corpus.set(url, { text: `${prev?.text ?? ""}\n${text}`, source, filedAt: filedAt ?? prev?.filedAt });
+  corpus.set(url, {
+    text: `${prev?.text ?? ""}\n${text}`,
+    source: facts.source,
+    filedAt: facts.filedAt ?? prev?.filedAt,
+    form: facts.form ?? prev?.form,
+  });
 }
 
 /** Compare text the way a reader would: case, whitespace and curly quotes don't matter. */
@@ -86,7 +96,7 @@ export interface RecordedSignal extends Signal {
  * Validate a record_signal call from the agent. Returns the signal, or the reason
  * it was rejected so the agent can correct itself. The quote must appear in text
  * the agent actually read this run; the url, source and (when known) filing date
- * are taken from the document it was found in, not from the agent.
+ * and form are taken from the document it was found in, not from the agent.
  */
 export function validateSignal(args: unknown, corpus: Corpus, asOf: Date): RecordedSignal | string {
   if (typeof args !== "object" || args === null) return "Arguments must be an object.";
@@ -98,8 +108,12 @@ export function validateSignal(args: unknown, corpus: Corpus, asOf: Date): Recor
   if (typeof a.filed_at !== "string" || !/^\d{4}-\d{2}-\d{2}$/.test(a.filed_at)) {
     return "filed_at must be the filing date as YYYY-MM-DD.";
   }
-  if (typeof a.quote !== "string" || a.quote.length < QUOTE_LENGTH.min || a.quote.length > QUOTE_LENGTH.max) {
-    return `quote must be ${QUOTE_LENGTH.min}-${QUOTE_LENGTH.max} characters copied from the filing.`;
+  if (typeof a.quote !== "string") return "quote must be text copied from the filing.";
+  if (a.quote.length > QUOTE_LENGTH.max) {
+    return `quote is ${a.quote.length} characters, over the ${QUOTE_LENGTH.max} limit. Quote just the one or two sentences that show the signal.`;
+  }
+  if (a.quote.length < QUOTE_LENGTH.min) {
+    return `quote is ${a.quote.length} characters; quote at least ${QUOTE_LENGTH.min} so it can be checked.`;
   }
   const url = locateQuote(corpus, a.quote, a.url);
   if (!url) return "quote was not found in any text you read this run. Copy it exactly from a tool result.";
@@ -108,7 +122,7 @@ export function validateSignal(args: unknown, corpus: Corpus, asOf: Date): Recor
   const signal: RecordedSignal = {
     kind: a.kind as SignalKind,
     summary: a.summary.trim(),
-    form: a.form as FilingForm,
+    form: doc.form ?? (a.form as FilingForm),
     section: typeof a.section === "string" && a.section.trim() ? a.section.trim() : undefined,
     filedAt: doc.filedAt ?? a.filed_at,
     source: doc.source,
@@ -119,39 +133,14 @@ export function validateSignal(args: unknown, corpus: Corpus, asOf: Date): Recor
   return signal;
 }
 
+/** Company facts filled in by code, not the agent. */
 export interface CompanyFacts {
-  gicsSector: string;
+  gicsSector?: string;
+  /** How the sector was determined. */
+  sectorSource?: string;
   revenueUsd?: number;
-  revenueQuote?: string;
-  revenueUrl?: string;
-}
-
-/**
- * Validate a set_company_facts call. A valid sector is kept even when the revenue
- * part fails; revenue only counts with a quote found in text read this run.
- */
-export function validateFacts(args: unknown, corpus: Corpus): { facts: CompanyFacts; revenueError?: string } | string {
-  if (typeof args !== "object" || args === null) return "Arguments must be an object.";
-  const a = args as Record<string, unknown>;
-  if (typeof a.gics_sector !== "string" || !GICS_SECTORS.includes(a.gics_sector)) {
-    return `gics_sector must be one of: ${GICS_SECTORS.join(", ")}.`;
-  }
-  const sectorOnly = { gicsSector: a.gics_sector };
-  if (a.revenue_usd === undefined || a.revenue_usd === null) return { facts: sectorOnly };
-
-  if (typeof a.revenue_usd !== "number" || !Number.isFinite(a.revenue_usd) || a.revenue_usd <= 0) {
-    return { facts: sectorOnly, revenueError: "revenue_usd must be a positive number of US dollars (not millions)." };
-  }
-  const url = typeof a.revenue_quote === "string" ? locateQuote(corpus, a.revenue_quote, a.url) : undefined;
-  if (!url) {
-    return {
-      facts: sectorOnly,
-      revenueError: "revenue_quote was not found in any text you read this run. Copy it exactly from a tool result.",
-    };
-  }
-  return {
-    facts: { gicsSector: a.gics_sector, revenueUsd: a.revenue_usd, revenueQuote: a.revenue_quote as string, revenueUrl: url },
-  };
+  /** Where the revenue figure came from. */
+  revenueSource?: string;
 }
 
 export interface ResearchResult {

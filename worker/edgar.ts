@@ -87,3 +87,52 @@ export async function documentText(env: Env, url: string): Promise<string> {
   const raw = (await (await get(env, url)).text()).slice(0, MAX_DOCUMENT_CHARS);
   return /\.txt$/i.test(url) ? raw : htmlToText(raw);
 }
+
+/** XBRL tags companies use for total revenue, most common first. */
+const REVENUE_TAGS = [
+  "Revenues",
+  "RevenueFromContractWithCustomerExcludingAssessedTax",
+  "SalesRevenueNet",
+  "RevenueFromContractWithCustomerIncludingAssessedTax",
+];
+
+export interface AnnualRevenue {
+  usd: number;
+  /** Last day of the fiscal year, YYYY-MM-DD. */
+  fiscalYearEnd: string;
+  tag: string;
+  form: string;
+  filed: string;
+}
+
+interface ConceptFact {
+  start?: string;
+  end: string;
+  val: number;
+  form: string;
+  filed: string;
+}
+
+const days = (from: string, to: string) => (Date.parse(to) - Date.parse(from)) / 86_400_000;
+
+/**
+ * Latest full-year revenue the company reported in a 10-K, from SEC's XBRL data.
+ * Companies switch revenue tags over time, so every common tag is checked and
+ * the most recent fiscal year wins.
+ */
+export async function annualRevenue(env: Env, cik: string): Promise<AnnualRevenue | undefined> {
+  const padded = cik.padStart(10, "0");
+  const results = await Promise.allSettled(
+    REVENUE_TAGS.map(async (tag) => {
+      const res = await get(env, `https://data.sec.gov/api/xbrl/companyconcept/CIK${padded}/us-gaap/${tag}.json`);
+      const { units } = (await res.json()) as { units?: { USD?: ConceptFact[] } };
+      return (units?.USD ?? [])
+        .filter((f) => f.form.startsWith("10-K") && f.start && days(f.start, f.end) > 330 && days(f.start, f.end) < 400)
+        .map((f) => ({ usd: f.val, fiscalYearEnd: f.end, tag, form: f.form, filed: f.filed }));
+    }),
+  );
+  const annual = results.flatMap((r) => (r.status === "fulfilled" ? r.value : []));
+  // Latest fiscal year; for the same year, the latest filing (restatements win).
+  annual.sort((a, b) => b.fiscalYearEnd.localeCompare(a.fiscalYearEnd) || b.filed.localeCompare(a.filed));
+  return annual[0];
+}

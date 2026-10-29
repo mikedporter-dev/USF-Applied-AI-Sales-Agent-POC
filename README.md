@@ -105,7 +105,11 @@ removed. From a browser (after the Cloudflare Access login):
 read with these tools: list and read 8-Ks, search and read 10-K sections, list Form 3s, and, when
 `SEC_USER_AGENT` is set, list EDGAR filings and read their documents (10-Q MD&A, 8-K exhibits). It
 records evidence with `record_signal`, and code rejects any quote that isn't in text the agent actually
-read, or any filing outside the 12-month window. Scoring uses `src/shared/scoring.ts`. A run is capped
+read, or any filing outside the 12-month window. The filing type, date and link on each signal come
+from the document the quote was found in, not from the agent. Facts are filled in by code, not the
+agent: the sector is mapped from the company's SIC code (`src/shared/sic.ts`, an approximation until
+the S&P 1500 list supplies GICS sectors) and revenue comes from SEC's XBRL data for the latest 10-K
+(needs `SEC_USER_AGENT`). Scoring uses `src/shared/scoring.ts`. A run is capped
 at 16 model turns and 6 EDGAR documents. In the last 4 turns the agent is reminded to record what it
 has; if it still hasn't finished, it gets 2 wrap-up turns in which it can only record findings and
 finish. Progress streams to the page as newline-delimited JSON from `POST /api/research`.

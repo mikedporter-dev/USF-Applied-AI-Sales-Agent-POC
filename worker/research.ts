@@ -3,24 +3,25 @@ import {
   type CompanyFacts,
   type Corpus,
   findPassages,
-  GICS_SECTORS,
   type RecordedSignal,
   type ResearchEvent,
   type ResearchResult,
   SIGNAL_KINDS,
   FILING_FORMS,
-  validateFacts,
   validateSignal,
 } from "../src/shared/research";
+import type { FilingForm } from "../src/shared/types";
 import { CONTACT_ROLE_LADDER, scoreAccount, WINDOW_MONTHS } from "../src/shared/scoring";
+import { sicToGicsSector } from "../src/shared/sic";
 import * as edgar from "./edgar";
 import type { Env } from "./env";
 import * as massive from "./massive";
 import { type AgentMessage, chatWithTools, type ToolDefinition } from "./nvidia";
 
 // The account research agent. The model decides which filings to read and what
-// counts as evidence; code supplies the data, checks every finding against the
-// text the model actually read, and scores the result with the app's own rules.
+// counts as evidence; code supplies the data and the company facts (sector,
+// revenue), checks every finding against the text the model actually read, and
+// scores the result with the app's own rules.
 
 /** Model turns per run. Each turn is one NVIDIA call plus the tools it asks for. */
 export const MAX_TURNS = 16;
@@ -28,7 +29,7 @@ export const MAX_TURNS = 16;
 export const WRAP_UP_TURNS = 2;
 /** When this many turns are left, the agent is reminded to record what it has. */
 const REMIND_AT = 4;
-const WRAP_UP_TOOLS = new Set(["record_signal", "set_company_facts", "finish"]);
+const WRAP_UP_TOOLS = new Set(["record_signal", "finish"]);
 /** EDGAR documents fetched per run, to bound time and CPU. */
 const MAX_EDGAR_READS = 6;
 /** Characters of text returned per read, so tool results stay a manageable size. */
@@ -98,17 +99,6 @@ function toolDefinitions(withEdgar: boolean): ToolDefinition[] {
   }
   tools.push(
     fn(
-      "set_company_facts",
-      "Record the company's GICS sector and, if you found it, annual revenue with a verbatim quote.",
-      {
-        gics_sector: { type: "string", enum: GICS_SECTORS },
-        revenue_usd: { type: "number", description: "full US dollars, e.g. 20382000000 for $20,382 million" },
-        revenue_quote: { type: "string", description: "exact text stating the revenue" },
-        url: { type: "string", description: "url of the filing the quote came from" },
-      },
-      ["gics_sector"],
-    ),
-    fn(
       "record_signal",
       "Record one piece of evidence. The quote is checked against the text you read and rejected if it isn't there.",
       {
@@ -118,7 +108,7 @@ function toolDefinitions(withEdgar: boolean): ToolDefinition[] {
         section: { type: "string", description: 'e.g. "Item 1 Business", "Item 5.02", "MD&A"' },
         filed_at: { type: "string", description: "filing date, YYYY-MM-DD" },
         url: { type: "string", description: "url of the filing or document you read it in; the quote is what's checked" },
-        quote: { type: "string", description: "20-600 characters copied exactly from that text" },
+        quote: { type: "string", description: "the one or two sentences that show the signal, copied exactly" },
       },
       ["kind", "summary", "form", "filed_at", "url", "quote"],
     ),
@@ -157,7 +147,7 @@ How to work:
 - Don't repeat a search you've already run; use the passages it returned.
 - Record one signal per distinct fact; don't split one announcement into several.
 - Copy each quote exactly from text a tool returned to you. A rejected signal tells you why; fix it and try again.
-- Call set_company_facts early, once you know the GICS sector and, if a filing states it, total annual revenue (usually in MD&A).
+- The company's sector and revenue are already filled in from SEC data, so don't look for them. Spend your turns on signals.
 - When you've covered the 8-Ks, new officers and the 10-K's AI language, call finish. Don't speculate beyond the filings.
 You have ${MAX_TURNS} turns, then a short wrap-up in which you can only record findings and finish.`;
 }
@@ -182,7 +172,8 @@ export async function runResearch(env: Env, ticker: string, emit: Emit, now = ne
 
   const corpus: Corpus = new Map();
   const signals: RecordedSignal[] = [];
-  let facts: CompanyFacts | undefined;
+  const facts = await companyFacts(env, profile, withEdgar);
+  await emit({ type: "status", message: describeFacts(facts) });
   let summary: string | undefined;
   let edgarReads = 0;
   const searchesRun = new Set<string>();
@@ -205,10 +196,15 @@ export async function runResearch(env: Env, ticker: string, emit: Emit, now = ne
   const tenK = () => once("10k", () => massive.tenKSections(env, ticker, windowStart));
   const edgarDocText = (url: string) => once(`doc:${url}`, () => edgar.documentText(env, url));
   const edgarFilings = () => once("edgar", () => edgar.recentFilings(env, profile.cik, ["10-Q", "8-K"], windowStart));
-  /** Filing date of an EDGAR document, from the filing folder it sits in. */
-  async function edgarFilingDate(url: string): Promise<string | undefined> {
+  /** Filing date and form of an EDGAR document, from the filing folder it sits in. */
+  async function edgarDocFacts(url: string) {
     const filings = await edgarFilings().catch(() => []);
-    return filings.find((f) => url.startsWith(`${f.folderUrl}/`))?.filingDate;
+    const filing = filings.find((f) => url.startsWith(`${f.folderUrl}/`));
+    const name = url.split("/").pop() ?? "";
+    let form: FilingForm | undefined;
+    if (filing?.form === "10-Q") form = "10-Q";
+    else if (filing?.form === "8-K") form = name === filing.primaryDocument ? "8-K" : /ex-?99/i.test(name) ? "8-K EX-99" : undefined;
+    return { source: "edgar" as const, filedAt: filing?.filingDate, form };
   }
 
   /** The model sometimes names this argument accession_number; accept either. */
@@ -243,7 +239,7 @@ export async function runResearch(env: Env, ticker: string, emit: Emit, now = ne
         const filing = (await eightKs()).find((f) => f.accession === accession);
         if (!filing) return fail("No 8-K with that accession in the window.");
         const text = filing.text.slice(0, CHUNK_CHARS * 2);
-        addToCorpus(corpus, filing.url, text, "massive", filing.filingDate);
+        addToCorpus(corpus, filing.url, text, { source: "massive", filedAt: filing.filingDate, form: "8-K" });
         await emit({ type: "tool", name, detail: `8-K filed ${filing.filingDate}` });
         return ok({ filing_date: filing.filingDate, url: filing.url, text });
       }
@@ -256,7 +252,7 @@ export async function runResearch(env: Env, ticker: string, emit: Emit, now = ne
           return REPEAT_NOTE;
         }
         const passages = findPassages(sec.text, terms);
-        for (const p of passages) addToCorpus(corpus, sec.url, p, "massive", sec.filingDate);
+        for (const p of passages) addToCorpus(corpus, sec.url, p, { source: "massive", filedAt: sec.filingDate, form: "10-K" });
         await emit({ type: "tool", name, detail: `10-K ${sec.section}: "${terms.join('", "')}" → ${passages.length} passages` });
         return ok({ filing_date: sec.filingDate, url: sec.url, passages });
       }
@@ -266,14 +262,18 @@ export async function runResearch(env: Env, ticker: string, emit: Emit, now = ne
         const part = Math.max(1, Number(args.part) || 1);
         const parts = Math.max(1, Math.ceil(sec.text.length / CHUNK_CHARS));
         const text = sec.text.slice((part - 1) * CHUNK_CHARS, part * CHUNK_CHARS);
-        addToCorpus(corpus, sec.url, text, "massive", sec.filingDate);
+        addToCorpus(corpus, sec.url, text, { source: "massive", filedAt: sec.filingDate, form: "10-K" });
         await emit({ type: "tool", name, detail: `10-K ${sec.section}, part ${part} of ${parts}` });
         return ok({ filing_date: sec.filingDate, url: sec.url, part, parts, text });
       }
       case "list_new_officers": {
         const list = await once("form3", () => massive.form3s(env, profile.cik, windowStart));
         for (const f of list) {
-          addToCorpus(corpus, f.url, `${f.ownerName}; ${f.officerTitle ?? "not an officer"}; filed ${f.filingDate}`, "massive", f.filingDate);
+          addToCorpus(corpus, f.url, `${f.ownerName}; ${f.officerTitle ?? "not an officer"}; filed ${f.filingDate}`, {
+            source: "massive",
+            filedAt: f.filingDate,
+            form: "Form 3",
+          });
         }
         await emit({ type: "tool", name, detail: `${list.length} Form 3 filings` });
         return ok(list.map((f) => ({ filing_date: f.filingDate, owner: f.ownerName, officer_title: f.officerTitle, is_officer: f.isOfficer, url: f.url })));
@@ -306,40 +306,17 @@ export async function runResearch(env: Env, ticker: string, emit: Emit, now = ne
         const name_ = url.split("/").pop();
         if (terms.length) {
           const passages = findPassages(text, terms);
-          for (const p of passages) addToCorpus(corpus, url, p, "edgar", await edgarFilingDate(url));
+          const docFacts = await edgarDocFacts(url);
+          for (const p of passages) addToCorpus(corpus, url, p, docFacts);
           await emit({ type: "tool", name, detail: `${name_}: "${terms.join('", "')}" → ${passages.length} passages` });
           return ok({ url, passages });
         }
         const part = Math.max(1, Number(args.part) || 1);
         const parts = Math.max(1, Math.ceil(text.length / CHUNK_CHARS));
         const chunk = text.slice((part - 1) * CHUNK_CHARS, part * CHUNK_CHARS);
-        addToCorpus(corpus, url, chunk, "edgar", await edgarFilingDate(url));
+        addToCorpus(corpus, url, chunk, await edgarDocFacts(url));
         await emit({ type: "tool", name, detail: `${name_}, part ${part} of ${parts}` });
         return ok({ url, part, parts, text: chunk });
-      }
-      case "set_company_facts": {
-        const result = validateFacts(args, corpus);
-        if (typeof result === "string") {
-          await emit({ type: "rejected", tool: name, reason: result });
-          return fail(result);
-        }
-        // Keep revenue already verified by an earlier call if this one only sets the sector.
-        facts = result.facts.revenueUsd || !facts?.revenueUsd ? result.facts : { ...facts, gicsSector: result.facts.gicsSector };
-        await emit({
-          type: "tool",
-          name,
-          detail: `${facts.gicsSector}${facts.revenueUsd ? ` · revenue $${(facts.revenueUsd / 1e9).toFixed(1)}B` : ""}`,
-        });
-        if (result.revenueError) {
-          await emit({
-            type: "rejected",
-            tool: name,
-            reason: `Sector kept; revenue not: ${result.revenueError}`,
-            attempted: typeof args.revenue_quote === "string" ? args.revenue_quote : undefined,
-          });
-          return ok({ recorded_sector: true, revenue_error: result.revenueError });
-        }
-        return ok({ recorded: true });
       }
       case "record_signal": {
         const result = validateSignal(args, corpus, now);
@@ -362,7 +339,7 @@ export async function runResearch(env: Env, ticker: string, emit: Emit, now = ne
     {
       role: "user",
       content: `Research ${profile.name} (${profile.ticker}), SEC CIK ${profile.cik}.
-Massive reports: industry "${profile.sicDescription ?? "unknown"}" (SIC), ${profile.employees ?? "unknown"} employees.`,
+Already known: ${describeFacts(facts)}; industry "${profile.sicDescription ?? "unknown"}"; ${profile.employees ?? "unknown"} employees.`,
     },
   ];
 
@@ -389,7 +366,7 @@ Massive reports: industry "${profile.sicDescription ?? "unknown"}" (SIC), ${prof
         args = {};
       }
       if (allowed && !allowed.has(call.function.name)) {
-        result = fail("Research time is up: only record_signal, set_company_facts and finish are available.");
+        result = fail("Research time is up: only record_signal and finish are available.");
       } else if (call.function.name === "finish") {
         summary = typeof args.summary === "string" ? args.summary : "";
         stopReason = "finished";
@@ -413,7 +390,7 @@ Massive reports: industry "${profile.sicDescription ?? "unknown"}" (SIC), ${prof
     if (summary === undefined && left > 0 && left <= REMIND_AT) {
       messages.push({
         role: "user",
-        content: `${left} turn${left === 1 ? "" : "s"} left. Record the signals you have evidence for with record_signal, call set_company_facts if you haven't, then finish.`,
+        content: `${left} turn${left === 1 ? "" : "s"} left. Record the signals you have evidence for with record_signal, then finish.`,
       });
     }
   }
@@ -424,7 +401,7 @@ Massive reports: industry "${profile.sicDescription ?? "unknown"}" (SIC), ${prof
     messages.push({
       role: "user",
       content:
-        "Research time is up. Record every signal you found evidence for with record_signal, call set_company_facts if you haven't, then call finish. Only those tools are available now.",
+        "Research time is up. Record every signal you found evidence for with record_signal, then call finish. Only those two tools are available now.",
     });
     await takeTurn(`Wrapping up (${turn} of ${WRAP_UP_TURNS})`, wrapUpTools, WRAP_UP_TOOLS);
   }
@@ -471,4 +448,32 @@ Massive reports: industry "${profile.sicDescription ?? "unknown"}" (SIC), ${prof
   };
   await emit({ type: "result", result });
   return result;
+}
+
+/** Sector from the SIC code and revenue from SEC XBRL: facts, so code fills them in rather than the agent. */
+async function companyFacts(env: Env, profile: massive.CompanyProfile, withEdgar: boolean): Promise<CompanyFacts> {
+  const facts: CompanyFacts = {};
+  const sector = sicToGicsSector(profile.sicCode);
+  if (sector) {
+    facts.gicsSector = sector;
+    facts.sectorSource = `Mapped from SIC ${profile.sicCode}${profile.sicDescription ? ` (${profile.sicDescription.toLowerCase()})` : ""}`;
+  }
+  if (withEdgar) {
+    try {
+      const revenue = await edgar.annualRevenue(env, profile.cik);
+      if (revenue) {
+        facts.revenueUsd = revenue.usd;
+        facts.revenueSource = `SEC XBRL ${revenue.tag}, fiscal year ended ${revenue.fiscalYearEnd} (${revenue.form} filed ${revenue.filed})`;
+      }
+    } catch {
+      // Revenue is optional: without it, Fit treats the company as small and the page says so.
+    }
+  }
+  return facts;
+}
+
+function describeFacts(facts: CompanyFacts): string {
+  const sector = facts.gicsSector ? `${facts.gicsSector} (from SIC code)` : "sector unknown";
+  const revenue = facts.revenueUsd ? `revenue $${(facts.revenueUsd / 1e9).toFixed(1)}B (SEC XBRL)` : "revenue not found";
+  return `${sector} · ${revenue}`;
 }
