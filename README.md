@@ -106,6 +106,9 @@ Run the files in `supabase/migrations/` in order in the Supabase SQL editor, or 
 1. `0001_init.sql`: tables, enums, row-level security
 2. `0002_target_contact_approval.sql`: seller approval on `target_contacts`
 
+To test with fictional data, run `supabase/seed/sample_accounts.sql` the same way. It's safe to run
+more than once, and its header has the one-line command that removes the sample data.
+
 Each migration runs in a single transaction. Row-level security is on with no policies, so only the
 Worker's Supabase secret key can read the data. Once `SUPABASE_URL` and `SUPABASE_SECRET_KEY` are set,
 `/api/accounts` reads from Supabase instead of the sample data, and approvals are saved there.
