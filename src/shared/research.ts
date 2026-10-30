@@ -39,9 +39,10 @@ export function addToCorpus(corpus: Corpus, url: string, text: string, facts: Do
   });
 }
 
-/** Compare text the way a reader would: case, whitespace and curly quotes don't matter. */
+/** Compare text the way a reader would: case, whitespace, curly quotes and stray JSON escapes don't matter. */
 export function normalizeText(text: string): string {
   return text
+    .replace(/\\+(["'])/g, "$1")
     .toLowerCase()
     .replace(/[‘’]/g, "'")
     .replace(/[“”]/g, '"')
@@ -53,12 +54,16 @@ export function normalizeText(text: string): string {
 /** Most text an ellipsis may stand for, so a shortened quote can't stitch distant passages together. */
 const MAX_ELLIPSIS_GAP = 1000;
 
-/** A shortened quote ("A ... B") is checked piece by piece: each piece must appear, in order, close together. */
-function quoteInText(text: string, quote: string): boolean {
-  const pieces = quote
+function quotePieces(quote: string): string[] {
+  return quote
     .split(/\[\.\.\.\]|\.\.\.|\u2026/)
     .map((p) => normalizeText(p).replace(/^["']+|["']+$/g, "").trim())
     .filter((p) => p.length >= 12);
+}
+
+/** A shortened quote ("A ... B") is checked piece by piece: each piece must appear, in order, close together. */
+function quoteInText(text: string, quote: string): boolean {
+  const pieces = quotePieces(quote);
   if (pieces.length === 0) return false;
   const haystack = normalizeText(text);
   // Try each place the first piece occurs, so a later, closer match isn't missed.
@@ -86,6 +91,33 @@ export function locateQuote(corpus: Corpus, quote: string, url?: unknown): strin
   if (typeof url === "string" && corpus.has(url) && quoteInText(corpus.get(url)!.text, quote)) return url;
   for (const [candidate, entry] of corpus) if (quoteInText(entry.text, quote)) return candidate;
   return undefined;
+}
+
+/**
+ * Why a quote wasn't found, specific enough for the agent to fix it in one try:
+ * how much of it matches, and where it first differs from the text it read.
+ */
+export function quoteMismatch(corpus: Corpus, quote: string): string {
+  const generic = "quote was not found in any text you read this run. Copy it exactly from a tool result.";
+  const first = quotePieces(quote)[0];
+  if (!first) return generic;
+  const docs = [...corpus.values()].map((d) => normalizeText(d.text));
+  const found = (n: number) => docs.some((d) => d.includes(first.slice(0, n)));
+  // A prefix that appears means every shorter one does, so binary search the longest.
+  let lo = 0;
+  let hi = first.length;
+  while (lo < hi) {
+    const mid = Math.ceil((lo + hi) / 2);
+    if (found(mid)) lo = mid;
+    else hi = mid - 1;
+  }
+  if (lo < 20) return generic;
+  const prefix = first.slice(0, lo);
+  const doc = docs.find((d) => d.includes(prefix))!;
+  const at = doc.indexOf(prefix) + lo;
+  const yours = first.slice(Math.max(0, lo - 30), lo + 40);
+  const theirs = doc.slice(Math.max(0, at - 30), at + 40);
+  return `quote was not found as written. It matches the text up to here: "…${yours}…" but the text reads "…${theirs}…". Copy the text exactly, including parentheses and quotation marks, or shorten the quote with "..." around the part that differs.`;
 }
 
 export interface RecordedSignal extends Signal {
@@ -116,7 +148,7 @@ export function validateSignal(args: unknown, corpus: Corpus, asOf: Date): Recor
     return `quote is ${a.quote.length} characters; quote at least ${QUOTE_LENGTH.min} so it can be checked.`;
   }
   const url = locateQuote(corpus, a.quote, a.url);
-  if (!url) return "quote was not found in any text you read this run. Copy it exactly from a tool result.";
+  if (!url) return quoteMismatch(corpus, a.quote);
   const doc = corpus.get(url)!;
 
   const signal: RecordedSignal = {

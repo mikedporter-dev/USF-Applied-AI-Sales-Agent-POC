@@ -126,7 +126,7 @@ Filings older than the window don't count.
 
 Signal kinds:
 - ai_commitment: a concrete AI investment, program, target or dated goal. Generic "we use AI" or "AI is a risk" language doesn't count.
-- leadership_change: a new or departing officer (8-K Item 5.02, Form 3). Directors are not officers.
+- leadership_change: a new or departing officer who would sponsor or shape AI work: CEO, CFO, COO, president, or a technology, data, digital, AI, analytics or transformation leader (8-K Item 5.02, Form 3). Legal, HR, accounting and other officers don't count, and directors are not officers.
 - acquisition: a completed acquisition (8-K Item 2.01).
 - restructuring: a restructuring or reorganization (8-K Item 2.05, or described in a filing).
 - ai_reorg: a restructuring explicitly tied to AI.
@@ -142,7 +142,7 @@ How to work:
   }
 - Call several tools in one turn when they don't depend on each other, e.g. list_8k_filings, list_new_officers and search_10k together.
 - Record each signal as soon as you have the evidence for it, before reading the next filing. Don't save them for the end: research stops at the turn limit, and anything unrecorded is lost.
-- 8-K items map to signals: Item 5.02 is a leadership_change (officers only), 2.01 an acquisition, 2.05 a restructuring. Record each one you read.
+- 8-K items map to signals: Item 5.02 is a leadership_change (for the officers listed above), 2.01 an acquisition, 2.05 a restructuring. Record each one you read.
 - Follow leads. If a filing mentions an AI pilot, look for whether later filings report results.
 - Don't repeat a search you've already run; use the passages it returned.
 - Record one signal per distinct fact; don't split one announcement into several.
@@ -370,7 +370,7 @@ Already known: ${describeFacts(facts)}; industry "${profile.sicDescription ?? "u
       } else if (call.function.name === "finish") {
         summary = typeof args.summary === "string" ? args.summary : "";
         stopReason = "finished";
-        await emit({ type: "status", message: `Finished with ${signals.length} signals` });
+        await emit({ type: "status", message: `Finished with ${signals.length} signal${signals.length === 1 ? "" : "s"}` });
         result = ok({ finished: true });
       } else {
         try {
