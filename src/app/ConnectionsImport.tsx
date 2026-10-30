@@ -97,7 +97,13 @@ export function ConnectionsImport({ connectionCount, onSaved }: { connectionCoun
         </div>
         <label className="btn btn-ghost btn-sm li-file">
           Choose Connections.csv
-          <input type="file" accept=".csv,text/csv" onChange={(e) => void read(e.target.files?.[0])} disabled={Boolean(busy)} />
+          <input
+            type="file"
+            accept=".csv,text/csv"
+            title="" // hides the browser's "No file chosen" tooltip over the page
+            onChange={(e) => void read(e.target.files?.[0])}
+            disabled={Boolean(busy)}
+          />
         </label>
       </div>
 

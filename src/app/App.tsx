@@ -195,7 +195,7 @@ export function App() {
             />
             <PipelineStep n={2} title="Read filings" note="Massive + EDGAR not connected" state="pending" />
             <PipelineStep n={3} title="Score & rank" note={`${accounts.length} accounts ranked`} state="done" />
-            <PipelineStep n={4} title="Find contacts" note="Apollo not connected" state="pending" />
+            <PipelineStep n={4} title="Find contacts" note="Apollo: coming in a future update" state="pending" />
             <PipelineStep
               n={5}
               title="Approve & enrich"
@@ -209,7 +209,7 @@ export function App() {
             <Integration name="Supabase" on={health?.integrations.supabase} />
             <Integration name="Massive" on={health?.integrations.massive} />
             <Integration name="SEC EDGAR" on={health?.integrations.edgar} />
-            <Integration name="Apollo" on={false} />
+            <Integration name="Apollo" on={false} offNote="Coming soon" />
           </ul>
           {health?.integrations.supabase && (
             <>
@@ -346,12 +346,12 @@ function PipelineStep(props: { n: number; title: string; note: string; state: "d
   );
 }
 
-function Integration({ name, on }: { name: string; on: boolean | undefined }) {
+function Integration({ name, on, offNote = "Not connected" }: { name: string; on: boolean | undefined; offNote?: string }) {
   return (
     <li>
       <span className={on ? "dot dot-on" : "dot"} />
       {name}
-      <small>{on ? "Connected" : "Not connected"}</small>
+      <small>{on ? "Connected" : offNote}</small>
     </li>
   );
 }
@@ -530,7 +530,7 @@ function AccountDetail(props: {
             </div>
           </>
         ) : (
-          <p className="muted">Apollo search hasn't run for this account.</p>
+          <p className="muted">Finding a target contact with Apollo is coming in a future update.</p>
         )}
       </DetailBlock>
 

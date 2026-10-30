@@ -230,7 +230,9 @@ In build order:
    in an update mode that adds new signals and retires outdated ones. Scores are recalculated daily
    from saved signals, so the 12-month window stays current. When an account moves up a tier or gains
    a strong new trigger, the agent writes a short "what changed and why it matters" alert.
-5. **Apollo contacts:** search the role ladder for the top 50–100 accounts, and enrich emails only
-   after seller approval, within credits. Needs an Apollo plan with API access to people search.
+5. **Apollo contacts** (coming in a future update; marked "Coming soon" on the site): search the role
+   ladder for the top 50–100 accounts, and enrich emails only after seller approval, within credits.
+   Needs an Apollo plan with API access to people search. The approval flow and its database
+   constraints are already built and work on sample data.
 
 Scoped for a future version: AI team benchmarks and peer comparisons (these need paid data).
