@@ -1,27 +1,34 @@
+import { htmlToText } from "./research";
 import type { IndexMembership } from "./types";
 
 // The S&P Composite 1500 universe: which companies are in each index, matched
 // to their SEC CIK, with GICS sector and latest annual revenue. Parsing and
-// matching are kept here, free of Worker APIs: the browser runs them, because
-// the Worker's CPU budget is too small for multi-megabyte files.
+// matching live here so they can be tested; scripts/import-universe.ts runs
+// them weekly in GitHub Actions and saves the result to Supabase.
 
-/** The three indexes and the iShares ETF that tracks each. */
-export const INDEX_SOURCES: { index: IndexMembership; etf: "IVV" | "IJH" | "IJR"; page: string }[] = [
-  { index: "S&P 500", etf: "IVV", page: "https://www.ishares.com/us/products/239726/ishares-core-sp-500-etf" },
-  { index: "S&P MidCap 400", etf: "IJH", page: "https://www.ishares.com/us/products/239763/ishares-core-sp-midcap-etf" },
-  { index: "S&P SmallCap 600", etf: "IJR", page: "https://www.ishares.com/us/products/239774/ishares-core-sp-smallcap-etf" },
+/**
+ * The three indexes and the Wikipedia page listing each one's companies with
+ * GICS sector. (iShares fund holdings would be the authoritative list, but
+ * iShares returned a web page instead of the file to both Cloudflare and GitHub
+ * Actions.) `min` guards against a page that was vandalized or restructured.
+ */
+export const INDEX_SOURCES: { index: IndexMembership; wikipedia: string; min: number }[] = [
+  { index: "S&P 500", wikipedia: "List_of_S&P_500_companies", min: 450 },
+  { index: "S&P MidCap 400", wikipedia: "List_of_S&P_400_companies", min: 350 },
+  { index: "S&P SmallCap 600", wikipedia: "List_of_S&P_600_companies", min: 500 },
 ];
+
+/** Don't save an import that matched far fewer companies than the 1,500 expected. */
+export const MIN_COMPANIES = 1200;
 
 /** XBRL tags for total revenue, and the calendar years to look in, latest first. */
 export const REVENUE_TAGS = [
   "Revenues",
+  "RevenuesNetOfInterestExpense", // how most banks report revenue
   "RevenueFromContractWithCustomerExcludingAssessedTax",
   "RevenueFromContractWithCustomerIncludingAssessedTax",
 ] as const;
 export const REVENUE_YEARS = (asOf: Date) => [asOf.getUTCFullYear() - 1, asOf.getUTCFullYear() - 2];
-
-/** iShares sector names that differ from GICS. */
-const SECTOR_NAMES: Record<string, string> = { Communication: "Communication Services" };
 
 export interface Holding {
   ticker: string;
@@ -29,67 +36,40 @@ export interface Holding {
   sector: string;
 }
 
-export interface Holdings {
-  /** Date of the holdings file, YYYY-MM-DD, when it says. */
-  asOf?: string;
-  holdings: Holding[];
-}
-
-/** Split one CSV line, honoring quotes ("1,234.5" stays one field). */
-function csvFields(line: string): string[] {
-  const fields: string[] = [];
-  let field = "";
-  let quoted = false;
-  for (let i = 0; i < line.length; i++) {
-    const c = line[i];
-    if (quoted) {
-      if (c === '"' && line[i + 1] === '"') {
-        field += '"';
-        i++;
-      } else if (c === '"') quoted = false;
-      else field += c;
-    } else if (c === '"') quoted = true;
-    else if (c === ",") {
-      fields.push(field);
-      field = "";
-    } else field += c;
-  }
-  fields.push(field);
-  return fields.map((f) => f.trim());
+/** Text of each cell in an HTML table row. */
+function cells(row: string, tag: "th" | "t[dh]"): string[] {
+  return [...row.matchAll(new RegExp(`<${tag}[^>]*>([\\s\\S]*?)</${tag}>`, "gi"))].map((m) =>
+    htmlToText(m[1].replace(/<sup[\s\S]*?<\/sup>/gi, "")) // drop footnote markers like [3]
+      .replace(/\s+/g, " ")
+      .trim(),
+  );
 }
 
 /**
- * Parse an iShares holdings CSV: a few summary lines ("Fund Holdings as of"),
- * a header row starting "Ticker,Name,Sector,Asset Class", one row per holding,
- * then a disclaimer. Only equities are kept; cash and futures are dropped.
+ * Parse a Wikipedia "List of S&P ... companies" page (rendered HTML from the
+ * parse API): the first table with a Symbol column and a GICS Sector column.
  */
-export function parseHoldingsCsv(text: string): Holdings {
-  const lines = text.replace(/^﻿/, "").split(/\r?\n/);
-  const asOfLine = lines.find((l) => /^"?Fund Holdings as of/i.test(l));
-  const asOfText = asOfLine ? csvFields(asOfLine)[1] : undefined;
-  const asOfDate = asOfText ? new Date(`${asOfText} UTC`) : undefined;
-  const asOf = asOfDate && !Number.isNaN(asOfDate.getTime()) ? asOfDate.toISOString().slice(0, 10) : undefined;
-
-  const headerAt = lines.findIndex((l) => /^"?Ticker"?,/i.test(l));
-  if (headerAt === -1) throw new Error("This doesn't look like an iShares holdings file: no Ticker,Name,Sector header row.");
-  const header = csvFields(lines[headerAt]).map((h) => h.toLowerCase());
-  const col = (name: string) => header.indexOf(name);
-  const [ticker, name, sector, assetClass] = [col("ticker"), col("name"), col("sector"), col("asset class")];
-  if (ticker < 0 || name < 0 || sector < 0) throw new Error("The holdings file is missing the Ticker, Name or Sector column.");
-
-  const holdings: Holding[] = [];
-  for (const line of lines.slice(headerAt + 1)) {
-    if (!line.trim()) break; // the disclaimer follows a blank line
-    const f = csvFields(line);
-    if (assetClass >= 0 && f[assetClass] !== "Equity") continue;
-    const t = f[ticker]?.toUpperCase();
-    if (!t || t === "-") continue;
-    holdings.push({ ticker: t, name: f[name], sector: SECTOR_NAMES[f[sector]] ?? f[sector] });
+export function parseWikipediaConstituents(html: string): Holding[] {
+  for (const table of html.split(/<table/i).slice(1).map((t) => t.split(/<\/table>/i)[0])) {
+    const rows = table.split(/<tr[\s>]/i).slice(1);
+    const header = rows.length ? cells(rows[0], "th").map((h) => h.toLowerCase()) : [];
+    const symbol = header.findIndex((h) => /symbol|ticker/.test(h));
+    const name = header.findIndex((h) => /^(security|company)/.test(h));
+    const sector = header.findIndex((h) => h.startsWith("gics sector"));
+    if (symbol < 0 || sector < 0) continue;
+    const holdings: Holding[] = [];
+    for (const row of rows.slice(1)) {
+      const c = cells(row, "t[dh]");
+      const ticker = c[symbol]?.toUpperCase();
+      if (!ticker || !/^[A-Z0-9.\-]{1,10}$/.test(ticker)) continue;
+      holdings.push({ ticker, name: c[name >= 0 ? name : symbol + 1] ?? ticker, sector: c[sector] });
+    }
+    return holdings;
   }
-  return { asOf, holdings };
+  throw new Error("No table with Symbol and GICS Sector columns on the Wikipedia page.");
 }
 
-/** Compare tickers across sources: iShares writes BRKB, SEC BRK-B, others BRK.B. */
+/** Compare tickers across sources: Wikipedia writes BRK.B, SEC BRK-B. */
 export const tickerKey = (ticker: string) => ticker.toUpperCase().replace(/[^A-Z0-9]/g, "");
 
 export interface SecTicker {
@@ -159,7 +139,8 @@ export function buildUniverse(
   const unmatched: UniverseBuild["unmatched"] = [];
   for (const { index, holdings: list } of holdings) {
     for (const h of list) {
-      const sec = secTickers.get(tickerKey(h.ticker));
+      // A class suffix SEC doesn't list (CWEN.A) falls back to the base ticker (CWEN).
+      const sec = secTickers.get(tickerKey(h.ticker)) ?? (h.ticker.includes(".") ? secTickers.get(tickerKey(h.ticker.split(".")[0])) : undefined);
       if (!sec) {
         unmatched.push({ ...h, index });
         continue;
@@ -181,25 +162,28 @@ export function buildUniverse(
   return { rows: [...rows.values()], unmatched };
 }
 
-/** Rows per save request, so each request stays small. */
-export const SAVE_BATCH = 250;
+/** Rows per Supabase upsert. */
+export const SAVE_BATCH = 500;
 
-const INDEXES: IndexMembership[] = ["S&P 500", "S&P MidCap 400", "S&P SmallCap 600"];
-
-/** Validate a batch of rows sent to POST /api/universe. Returns the rows, or an error. */
-export function parseUniverseBatch(body: unknown): { importedAt: string; rows: UniverseRow[] } | string {
-  const b = body as { importedAt?: unknown; rows?: unknown } | null;
-  if (!b || typeof b.importedAt !== "string" || Number.isNaN(Date.parse(b.importedAt))) return "importedAt must be a timestamp";
-  if (!Array.isArray(b.rows) || b.rows.length === 0 || b.rows.length > SAVE_BATCH) return `rows must be 1 to ${SAVE_BATCH} companies`;
-  for (const r of b.rows as UniverseRow[]) {
-    if (!/^\d{10}$/.test(r?.cik)) return `bad cik: ${JSON.stringify(r?.cik)}`;
-    if (typeof r.ticker !== "string" || !/^[A-Z0-9.\-]{1,10}$/.test(r.ticker)) return `bad ticker for ${r.cik}`;
-    if (typeof r.name !== "string" || !r.name) return `missing name for ${r.cik}`;
-    if (typeof r.gicsSector !== "string" || !r.gicsSector) return `missing sector for ${r.cik}`;
-    if (!INDEXES.includes(r.index)) return `bad index for ${r.cik}`;
-    if (r.revenueUsd !== undefined && !(typeof r.revenueUsd === "number" && r.revenueUsd > 0)) return `bad revenue for ${r.cik}`;
-  }
-  return { importedAt: b.importedAt, rows: b.rows as UniverseRow[] };
+/**
+ * A row for the companies table. Each import stamps its rows with its start
+ * time, so rows an earlier import saw but this one didn't can be marked as
+ * having left the indexes.
+ */
+export function companyRecord(r: UniverseRow, importedAt: string) {
+  return {
+    cik: r.cik,
+    ticker: r.ticker,
+    name: r.name,
+    industry: r.gicsSector,
+    index_membership: r.index,
+    revenue_usd: r.revenueUsd ?? null,
+    revenue_fiscal_year_end: r.revenueFiscalYearEnd ?? null,
+    revenue_source: r.revenueTag ? `SEC XBRL ${r.revenueTag}` : null,
+    in_index: true,
+    indexed_at: importedAt,
+    updated_at: importedAt,
+  };
 }
 
 export interface UniverseSummary {

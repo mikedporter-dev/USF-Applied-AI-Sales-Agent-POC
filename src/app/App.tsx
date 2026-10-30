@@ -13,7 +13,7 @@ import type {
   TargetContact,
   Tier,
 } from "../shared/types";
-import { UniverseImport } from "./UniverseImport";
+import { UniverseStatus } from "./UniverseStatus";
 
 type TierFilter = "all" | Tier;
 
@@ -205,7 +205,7 @@ export function App() {
           {health?.integrations.supabase && (
             <>
               <span className="label">S&amp;P Composite 1500</span>
-              <UniverseImport />
+              <UniverseStatus />
             </>
           )}
         </aside>

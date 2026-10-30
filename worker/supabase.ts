@@ -1,6 +1,6 @@
 import { createClient, type SupabaseClient } from "@supabase/supabase-js";
 import { approvalChange } from "../src/shared/approval";
-import type { UniverseRow, UniverseSummary } from "../src/shared/universe";
+import type { UniverseSummary } from "../src/shared/universe";
 import type {
   AccountInput,
   ApprovalRequest,
@@ -146,44 +146,6 @@ export async function setApproval(env: Env, { contactIds, status }: ApprovalRequ
     emailStatus: row.email_status,
     email: row.email ?? undefined,
   }));
-}
-
-/**
- * Save one batch of the S&P 1500 import. Each row is stamped with the import's
- * start time, so finishUniverseImport can tell which companies dropped out.
- */
-export async function saveUniverse(env: Env, importedAt: string, rows: UniverseRow[]): Promise<number> {
-  const { error } = await client(env)
-    .from("companies")
-    .upsert(
-      rows.map((r) => ({
-        cik: r.cik,
-        ticker: r.ticker,
-        name: r.name,
-        industry: r.gicsSector,
-        index_membership: r.index,
-        revenue_usd: r.revenueUsd ?? null,
-        revenue_fiscal_year_end: r.revenueFiscalYearEnd ?? null,
-        revenue_source: r.revenueTag ? `SEC XBRL ${r.revenueTag}` : null,
-        in_index: true,
-        indexed_at: importedAt,
-        updated_at: new Date().toISOString(),
-      })),
-      { onConflict: "cik" },
-    );
-  if (error) throw new Error(`Supabase: ${error.message}`);
-  return rows.length;
-}
-
-/** After every batch is saved: companies an earlier import saw but this one didn't have left the indexes. */
-export async function finishUniverseImport(env: Env, importedAt: string): Promise<number> {
-  const { count, error } = await client(env)
-    .from("companies")
-    .update({ in_index: false }, { count: "exact" })
-    .eq("in_index", true)
-    .lt("indexed_at", importedAt);
-  if (error) throw new Error(`Supabase: ${error.message}`);
-  return count ?? 0;
 }
 
 /** How many companies are in the universe now, by index. */

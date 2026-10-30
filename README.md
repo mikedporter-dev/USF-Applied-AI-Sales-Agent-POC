@@ -147,21 +147,26 @@ Worker's Supabase secret key can read the data. Once `SUPABASE_URL` and `SUPABAS
 
 ### S&P Composite 1500 import
 
-The Accounts page has an **Import S&P 1500** button (it needs Supabase and `SEC_USER_AGENT`). It loads:
+A GitHub Actions job (`.github/workflows/import-universe.yml`) runs `scripts/import-universe.ts` every
+Monday and on demand (Actions → Import S&P 1500 → Run workflow). It loads every company in the three
+indexes into `companies`:
 
-- **Index membership and GICS sector** from the holdings of the iShares ETFs that track each index:
-  IVV (S&P 500), IJH (MidCap 400) and IJR (SmallCap 600).
-- **CIK** from SEC's `company_tickers.json`, matching tickers across styles (BRKB, BRK-B, BRK.B).
+- **Index membership and GICS sector** from Wikipedia's constituent lists (List of S&P 500, 400 and 600
+  companies), which are kept current as S&P rebalances. iShares fund holdings would be the authoritative
+  source, but iShares returns a web page instead of the file to both Cloudflare and GitHub Actions.
+- **CIK** from SEC's `company_tickers.json`, matching ticker styles (BRK.B, BRK-B). A company with two
+  share classes (GOOGL, GOOG) is one row.
 - **Annual revenue** from SEC XBRL frames: one file per revenue tag per calendar year covers every
-  filer, so revenue for all 1,500 companies takes six requests.
+  filer, so revenue for all 1,500 companies takes eight requests (four tags, including the one most
+  banks use, over two years).
 
-The files are megabytes, more than the Worker's CPU budget allows it to parse, so the Worker only
-passes them through (`GET /api/universe/source/:name`, fixed sources only) and the browser parses and
-matches them (`src/shared/universe.ts`), then saves companies in batches (`POST /api/universe`). If
-iShares can't be fetched, the page links to the fund page so the CSV can be downloaded and uploaded.
-An import that matches far fewer than 1,500 companies isn't saved. Companies that leave the indexes are
-kept with `in_index = false`, so their signals and connections stay. Research uses the imported GICS
-sector and index membership when the company is in the list.
+It runs in GitHub rather than the Worker because parsing these multi-megabyte files takes far more
+than the Worker's CPU budget. It needs three repository secrets (Settings → Secrets and variables →
+Actions): `SEC_USER_AGENT`, `SUPABASE_URL` and `SUPABASE_SECRET_KEY`. Only `main` saves; pushes to other
+branches run a dry run that prints the report without the Supabase secrets. An import that matches far
+fewer than 1,500 companies isn't saved. Companies that leave the indexes are kept with
+`in_index = false`, so their signals and connections stay. The Accounts page shows the counts, and
+research uses the imported GICS sector and index membership.
 
 ## Deploy
 
@@ -195,7 +200,7 @@ To deploy from your own machine instead: `npx wrangler login`, then `npm run dep
 In build order:
 
 1. **S&P Composite 1500 universe** (done): index membership, GICS sector, SEC CIK and revenue for each
-   company, imported from the Accounts page.
+   company, refreshed weekly by GitHub Actions.
 2. **LinkedIn import:** upload the seller's `Connections.csv` export, keep Manager+ connections, and
    match them to the universe.
 3. **Saved research:** run the research agent for every matched company in the background
