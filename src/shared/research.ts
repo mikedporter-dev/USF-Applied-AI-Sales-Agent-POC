@@ -209,7 +209,8 @@ export interface ResearchResult {
   /** The agent's own wrap-up, from its finish call. */
   summary?: string;
   /** Why the run ended. */
-  stopReason: "finished" | "step_limit";
+  /** model_error: the model stopped answering, so the run ended early with what was recorded. */
+  stopReason: "finished" | "step_limit" | "model_error";
   usedEdgar: boolean;
   nextStep: string;
 }

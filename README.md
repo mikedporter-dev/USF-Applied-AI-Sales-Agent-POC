@@ -117,7 +117,10 @@ each filing. Code tracks which key 8-Ks nothing was recorded from, names them in
 reminder, and reminds the agent once more before it finishes; it decides whether they qualify. AI
 mentions quoted from 10-K risk factors are rejected as boilerplate. In the last
 4 turns the agent is reminded to record what it has; if it still hasn't finished, it gets 2 wrap-up turns in which it can only record findings and
-finish. Progress streams to the page as newline-delimited JSON from `POST /api/research`.
+finish. Each turn resends the conversation, so large filing text older than 3 turns is replaced with a
+short note (quotes from it are still checked against the full text). A model turn that takes over 90
+seconds is retried once without thinking; if that fails too, the run ends with the signals recorded so
+far. Progress streams to the page as newline-delimited JSON from `POST /api/research`.
 
 It needs the `NVIDIA_API_KEY` and `MASSIVE_API_KEY` secrets. `SEC_USER_AGENT` is optional: SEC
 requires a name and contact email on each request, e.g. `Jane Doe jane@example.com`, so it's kept as a

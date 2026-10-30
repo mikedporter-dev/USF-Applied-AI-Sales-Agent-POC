@@ -28,6 +28,12 @@ const massive: Record<string, unknown> = {
         text: "Our 2030 plan commits $250 million to artificial intelligence across claims processing. Other text follows.",
       },
       {
+        section: "mda",
+        filing_date: "2026-02-20",
+        filing_url: TENK_URL,
+        text: `${"Net sales grew in every region. ".repeat(150)}We launched an AI demand-forecasting program in 2026.`,
+      },
+      {
         section: "risk_factors",
         filing_date: "2026-02-20",
         filing_url: TENK_URL,
@@ -291,6 +297,86 @@ describe("AI mentions", () => {
     ]);
     expect(result.signals).toHaveLength(0);
     expect(events).toContainEqual(expect.objectContaining({ type: "rejected", reason: expect.stringContaining("Risk-factor language") }));
+  });
+});
+
+const timeout = (): Response => {
+  const err = new Error("The operation was aborted due to timeout");
+  err.name = "TimeoutError";
+  throw err;
+};
+
+describe("model trouble", () => {
+  it("retries a turn that times out without thinking, then carries on", async () => {
+    const { result, nvidiaBodies, events } = await collect([
+      timeout,
+      () => turn(toolCall("a", "finish", { summary: "Nothing." })),
+      () => turn(toolCall("b", "finish", { summary: "Nothing qualifies." })),
+    ]);
+    expect((nvidiaBodies[1] as unknown as { chat_template_kwargs?: unknown }).chat_template_kwargs).toEqual({ enable_thinking: false });
+    expect(events).toContainEqual(expect.objectContaining({ type: "status", message: expect.stringContaining("didn't answer within 90 seconds; retrying") }));
+    expect(result.stopReason).toBe("finished");
+  });
+
+  it("ends with what was recorded when the model fails twice, instead of losing the run", async () => {
+    const { result, events } = await collect([
+      () => turn(toolCall("a", "list_8k_filings", {})),
+      () =>
+        turn(
+          toolCall("b", "record_signal", {
+            kind: "leadership_change",
+            summary: "New Chief Data Officer appointed.",
+            form: "8-K",
+            filed_at: "2026-06-01",
+            url: EIGHTK_URL,
+            quote: "appointed Jane Roe as Chief Data Officer",
+          }),
+        ),
+      timeout,
+      timeout,
+    ]);
+    expect(result.stopReason).toBe("model_error");
+    expect(result.signals).toHaveLength(1);
+    expect(result.scores.intent).toBe(20);
+    expect(events.at(-1)?.type).toBe("result");
+  });
+
+  it("trims large filing text after a few turns but still accepts quotes from it", async () => {
+    const { result, nvidiaBodies } = await collect([
+      () => turn(toolCall("a", "read_10k", { section: "mda" })),
+      () => turn(toolCall("b", "list_new_officers", {})),
+      () => turn(toolCall("c", "list_8k_filings", {})),
+      () => turn(toolCall("d", "search_10k", { section: "business", terms: ["claims"] })),
+      () =>
+        turn(
+          toolCall("e", "record_signal", {
+            kind: "ai_commitment",
+            summary: "Launched an AI demand-forecasting program.",
+            form: "10-K",
+            filed_at: "2026-02-20",
+            url: TENK_URL,
+            quote: "We launched an AI demand-forecasting program in 2026.",
+          }),
+        ),
+    ]);
+    const firstToolResult = (i: number) => nvidiaBodies[i].messages.find((m) => m.role === "tool")?.content ?? "";
+    expect(firstToolResult(1)).toContain("Net sales grew"); // still full on the next turn
+    expect(firstToolResult(4)).toContain("trimmed");
+    expect(result.signals.map((s) => s.kind)).toContain("ai_commitment");
+  });
+
+  it("lets the agent rerun a search whose passages were trimmed", async () => {
+    const search = () => turn(toolCall(`s${Math.random()}`, "search_10k", { section: "mda", terms: ["net sales"] }));
+    const { events } = await collect([
+      search,
+      search, // still visible: skipped
+      () => turn(toolCall("b", "list_new_officers", {})),
+      () => turn(toolCall("c", "list_8k_filings", {})),
+      search, // trimmed by now: runs again
+    ]);
+    const searches = events.filter((e) => e.type === "tool" && e.name === "search_10k").map((e) => (e.type === "tool" ? e.detail : ""));
+    expect(searches[1]).toContain("repeat search skipped");
+    expect(searches[2]).toContain("passages");
   });
 });
 

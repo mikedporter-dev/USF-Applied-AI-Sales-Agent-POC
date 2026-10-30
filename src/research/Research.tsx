@@ -151,6 +151,7 @@ function ResultCard({ result: r }: { result: ResearchResult }) {
       ? `Sector: ${r.facts?.sectorSource}. An approximation until the S&P 1500 list supplies the GICS sector.`
       : "No sector could be mapped from the SIC code, so Fit uses the default industry weight.",
     r.stopReason === "step_limit" ? "The agent hit its turn limit before finishing." : null,
+    r.stopReason === "model_error" ? "The model stopped answering, so research ended early with the signals recorded so far." : null,
   ].filter(Boolean);
 
   return (
