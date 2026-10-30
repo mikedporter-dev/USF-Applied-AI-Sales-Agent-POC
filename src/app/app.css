@@ -81,6 +81,52 @@
   padding: 0;
   list-style: none;
 }
+.universe {
+  display: grid;
+  gap: 8px;
+  font-size: 13px;
+}
+.universe-summary {
+  margin: 0;
+}
+.universe-summary small {
+  display: block;
+  margin-top: 2px;
+  color: var(--muted);
+}
+.universe .btn {
+  justify-self: start;
+}
+.universe-upload {
+  display: grid;
+  gap: 10px;
+}
+.universe-upload label {
+  display: grid;
+  gap: 4px;
+  font-size: 12px;
+}
+.universe-upload a {
+  color: var(--blue);
+}
+.universe-upload input {
+  max-width: 100%;
+  font-size: 12px;
+}
+.universe-log {
+  display: grid;
+  gap: 2px;
+  margin: 0;
+  padding-left: 16px;
+  font-size: 12px;
+  color: var(--text-2);
+  overflow-wrap: anywhere;
+}
+.universe-error {
+  margin: 0;
+  font-size: 12px;
+  color: #c2410c;
+}
 .step {
   display: flex;
   gap: 10px;

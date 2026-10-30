@@ -383,6 +383,40 @@ describe("model trouble", () => {
   });
 });
 
+describe("EDGAR documents", () => {
+  it("takes the form and date of a whole-filing .txt from its EDGAR filing, not from the agent", async () => {
+    const DOC = "https://www.sec.gov/Archives/edgar/data/1/0001104659-25-109135.txt";
+    massive["/submissions/CIK0000000001.json"] = {
+      filings: {
+        recent: { form: ["8-K"], filingDate: ["2025-11-10"], accessionNumber: ["0001104659-25-109135"], primaryDocument: ["tm25.htm"] },
+      },
+    };
+    massive["/Archives/edgar/data/1/0001104659-25-109135.txt"] = "Investor day: we are leading in capabilities such as data, analytics and AI across the business.";
+    try {
+      const nvidiaBodies = mockFetch([
+        () => turn(toolCall("a", "read_edgar_document", { url: DOC, terms: ["analytics and AI"] })),
+        () =>
+          turn(
+            toolCall("b", "record_signal", {
+              kind: "ai_mention",
+              summary: "Names data, analytics and AI as a capability.",
+              form: "10-K",
+              filed_at: "2026-02-23",
+              url: DOC,
+              quote: "leading in capabilities such as data, analytics and AI",
+            }),
+          ),
+      ]);
+      const result = await runResearch({ ...env, SEC_USER_AGENT: "Test Dev test@example.com" }, "TEST", async () => {}, NOW);
+      expect(result.signals[0]).toMatchObject({ form: "8-K", filedAt: "2025-11-10", source: "edgar", url: DOC });
+      expect(nvidiaBodies.length).toBeGreaterThan(1);
+    } finally {
+      delete massive["/submissions/CIK0000000001.json"];
+      delete massive["/Archives/edgar/data/1/0001104659-25-109135.txt"];
+    }
+  });
+});
+
 describe("isValidTicker", () => {
   it.each(["CL", "BRK.B", "BF-B"])("accepts %s", (t) => expect(isValidTicker(t)).toBe(true));
   it.each(["", "cl", "TOOLONGTICKER", "CL;DROP", 42])("rejects %j", (t) => expect(isValidTicker(t)).toBe(false));

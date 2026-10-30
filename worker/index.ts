@@ -9,6 +9,8 @@ import * as massive from "./massive";
 import { chat, draftOutreachBrief, parseChatMessage } from "./nvidia";
 import { isValidTicker, runResearch } from "./research";
 import * as supabase from "./supabase";
+import { parseUniverseBatch } from "../src/shared/universe";
+import { passThrough } from "./universe";
 
 const json = (body: unknown, status = 200) =>
   new Response(JSON.stringify(body), {
@@ -111,6 +113,27 @@ async function handleApi(request: Request, env: Env, ctx: ExecutionContext, path
     const ticker = typeof body?.ticker === "string" ? body.ticker.trim().toUpperCase() : undefined;
     if (!isValidTicker(ticker)) return json({ error: "ticker must be a stock ticker like CL or BRK.B" }, 400);
     return streamResearch(env, ctx, ticker);
+  }
+
+  // S&P 1500 import: the browser fetches the source files through the Worker,
+  // parses and matches them, then saves the companies here in batches.
+  if (path.startsWith("/api/universe")) {
+    if (!supabase.isConfigured(env)) return json({ error: "The S&P 1500 import needs Supabase." }, 503);
+    if (path === "/api/universe" && request.method === "GET") return json(await supabase.universeSummary(env));
+    const source = path.match(/^\/api\/universe\/source\/(.+)$/);
+    if (source && request.method === "GET") return passThrough(env, decodeURIComponent(source[1]));
+    if (path === "/api/universe" && request.method === "POST") {
+      const parsed = parseUniverseBatch(await request.json().catch(() => null));
+      if (typeof parsed === "string") return json({ error: parsed }, 400);
+      return json({ saved: await supabase.saveUniverse(env, parsed.importedAt, parsed.rows) });
+    }
+    if (path === "/api/universe/finish" && request.method === "POST") {
+      const body = (await request.json().catch(() => null)) as { importedAt?: unknown } | null;
+      if (typeof body?.importedAt !== "string" || Number.isNaN(Date.parse(body.importedAt))) {
+        return json({ error: "importedAt must be a timestamp" }, 400);
+      }
+      return json({ leftIndex: await supabase.finishUniverseImport(env, body.importedAt) });
+    }
   }
 
   const brief = path.match(/^\/api\/accounts\/(\d{10})\/brief$/);

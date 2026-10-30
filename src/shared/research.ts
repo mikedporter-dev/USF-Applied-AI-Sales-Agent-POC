@@ -1,5 +1,5 @@
 import { inWindow, WINDOW_MONTHS } from "./scoring";
-import type { FilingForm, Scores, Signal, SignalKind, SignalSource, Tier } from "./types";
+import type { FilingForm, IndexMembership, Scores, Signal, SignalKind, SignalSource, Tier } from "./types";
 
 // The account research agent: shared types and the checks every finding must
 // pass before it counts. Kept free of Worker APIs so it can be unit-tested.
@@ -224,6 +224,10 @@ export interface CompanyFacts {
   revenueUsd?: number;
   /** Where the revenue figure came from. */
   revenueSource?: string;
+  /** Index membership, from the imported S&P 1500 list. */
+  index?: IndexMembership;
+  /** Whether the S&P 1500 list had been imported, so a missing index means "not a member". */
+  universeLoaded?: boolean;
 }
 
 export interface ResearchResult {

@@ -151,12 +151,18 @@ export function Research() {
 function ResultCard({ result: r }: { result: ResearchResult }) {
   const caveats = [
     "Not in your network yet: the app only ranks companies where you have a Manager+ connection.",
-    "S&P Composite 1500 membership wasn't checked.",
+    r.facts?.index
+      ? null
+      : r.facts?.universeLoaded
+        ? "Not in the S&P Composite 1500, so it won't appear in your ranked accounts."
+        : "S&P Composite 1500 membership wasn't checked: import the list on the Accounts page.",
     r.usedEdgar ? null : "SEC EDGAR isn't configured, so 10-Q MD&A and 8-K exhibits weren't read.",
     r.facts?.revenueSource ?? "Revenue wasn't found in SEC data, so the Fit score treats the company as small.",
-    r.facts?.sectorSource
-      ? `Sector: ${r.facts?.sectorSource}. An approximation until the S&P 1500 list supplies the GICS sector.`
-      : "No sector could be mapped from the SIC code, so Fit uses the default industry weight.",
+    r.facts?.index
+      ? null // the GICS sector comes from the S&P 1500 list
+      : r.facts?.sectorSource
+        ? `Sector: ${r.facts.sectorSource}. An approximation until the S&P 1500 list supplies the GICS sector.`
+        : "No sector could be mapped from the SIC code, so Fit uses the default industry weight.",
     r.stopReason === "step_limit" ? "The agent hit its turn limit before finishing." : null,
     r.stopReason === "model_error" ? "The model stopped answering, so research ended early with the signals recorded so far." : null,
   ].filter(Boolean);
@@ -170,6 +176,7 @@ function ResultCard({ result: r }: { result: ResearchResult }) {
             {r.company.ticker} · CIK {r.company.cik}
             {r.company.industry ? ` · ${r.company.industry}` : ""}
             {r.company.revenueUsd ? ` · ${formatRevenue(r.company.revenueUsd)} revenue` : ""}
+            {r.facts?.index ? ` · ${r.facts.index}` : ""}
           </p>
         </div>
       </div>

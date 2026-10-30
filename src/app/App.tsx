@@ -13,6 +13,7 @@ import type {
   TargetContact,
   Tier,
 } from "../shared/types";
+import { UniverseImport } from "./UniverseImport";
 
 type TierFilter = "all" | Tier;
 
@@ -201,6 +202,12 @@ export function App() {
             <Integration name="SEC EDGAR" on={health?.integrations.edgar} />
             <Integration name="Apollo" on={false} />
           </ul>
+          {health?.integrations.supabase && (
+            <>
+              <span className="label">S&amp;P Composite 1500</span>
+              <UniverseImport />
+            </>
+          )}
         </aside>
 
         <main className="ws-main">
