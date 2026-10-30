@@ -118,7 +118,9 @@ reminder, and reminds the agent once more before it finishes; it decides whether
 mentions quoted from 10-K risk factors are rejected as boilerplate. A leadership change must name the
 officer's role, which code checks: it must be a role that counts (CEO, CFO, COO, president, or a
 technology, data, digital, AI, analytics or transformation leader), appear in the quote, and not be a
-title at another company, so directors and outside executives joining the board are rejected. In the last
+title at another company, so directors and outside executives joining the board are rejected. The quote
+must also show someone arriving or leaving (appointed, promoted, retiring…), so amendments to pay or
+severance plans don't count, except on a Form 3, which is itself a new officer's filing. In the last
 4 turns the agent is reminded to record what it has; if it still hasn't finished, it gets 2 wrap-up turns in which it can only record findings and
 finish. Each turn resends the conversation, so large filing text older than 3 turns is replaced with a
 short note (quotes from it are still checked against the full text). A model turn that takes over 90

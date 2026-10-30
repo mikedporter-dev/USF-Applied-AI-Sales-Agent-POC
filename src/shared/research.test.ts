@@ -90,7 +90,7 @@ describe("validateSignal", () => {
     });
     const result = validateSignal({ ...valid, quote: "on April 8, 2026, the Board of Directors of the Company elected Betsy Fishbone" }, c, NOW);
     expect(result).toContain('matches the text up to here');
-    expect(result).toContain('the company (the "board") elected');
+    expect(result).toContain("the company (the 'board') elected");
   });
 
   it("says when a quote starts before the passage the agent was given", () => {
@@ -159,6 +159,45 @@ describe("checkLeadershipRole", () => {
       CL,
     );
     expect(result).toContain("title at another company");
+  });
+});
+
+describe("leadership changes", () => {
+  const c = (): Corpus => {
+    const corpus: Corpus = new Map();
+    addToCorpus(
+      corpus,
+      URL_A,
+      'On November 1, 2025, the compensation committee (the "Committee") approved amendments to the severance plan for co-Chief Executive Officer Ted Example. ' +
+        'The Board of Directors (the "Board") appointed Josh Example as Chief Executive Officer of the Company, effective March 18, 2026.',
+      { source: "massive", filedAt: "2026-02-03", form: "8-K" },
+    );
+    return corpus;
+  };
+  const change = { ...valid, kind: "leadership_change", form: "8-K", role: "Chief Executive Officer" };
+
+  it("needs someone arriving or leaving, not a change to their pay", () => {
+    const severance = validateSignal({ ...change, quote: "approved amendments to the severance plan for co-Chief Executive Officer Ted Example" }, c(), NOW, "Example Co");
+    expect(severance).toContain("aren't leadership changes");
+    const appointed = validateSignal({ ...change, quote: "appointed Josh Example as Chief Executive Officer of the Company" }, c(), NOW, "Example Co");
+    expect(appointed).toMatchObject({ kind: "leadership_change" });
+  });
+
+  it("treats single and double quotation marks alike", () => {
+    const quote = "The Board of Directors (the 'Board') appointed Josh Example as Chief Executive Officer of the Company";
+    expect(validateSignal({ ...change, quote }, c(), NOW, "Example Co")).toMatchObject({ kind: "leadership_change" });
+  });
+
+  it("accepts a new officer's Form 3 without appointment wording", () => {
+    const corpus: Corpus = new Map();
+    addToCorpus(corpus, URL_B, "Jane Example; Chief Data Officer; filed 2026-06-01", { source: "massive", filedAt: "2026-06-01", form: "Form 3" });
+    const result = validateSignal(
+      { ...change, form: "Form 3", url: URL_B, role: "Chief Data Officer", quote: "Jane Example; Chief Data Officer; filed 2026-06-01" },
+      corpus,
+      NOW,
+      "Example Co",
+    );
+    expect(result).toMatchObject({ kind: "leadership_change", form: "Form 3" });
   });
 });
 
