@@ -30,6 +30,8 @@ export const WRAP_UP_TURNS = 2;
 /** When this many turns are left, the agent is reminded to record what it has. */
 const REMIND_AT = 4;
 const WRAP_UP_TOOLS = new Set(["record_signal", "finish"]);
+/** 8-K items that usually mean a signal; code checks they were covered before the agent finishes. */
+const KEY_8K_ITEMS: Record<string, string> = { "2.01": "acquisition", "2.05": "restructuring", "5.02": "officer change" };
 /** EDGAR documents fetched per run, to bound time and CPU. */
 const MAX_EDGAR_READS = 6;
 /** Characters of text returned per read, so tool results stay a manageable size. */
@@ -197,6 +199,25 @@ export async function runResearch(env: Env, ticker: string, emit: Emit, now = ne
   const tenK = () => once("10k", () => massive.tenKSections(env, ticker, windowStart));
   const edgarDocText = (url: string) => once(`doc:${url}`, () => edgar.documentText(env, url));
   const edgarFilings = () => once("edgar", () => edgar.recentFilings(env, profile.cik, ["10-Q", "8-K"], windowStart));
+
+  /**
+   * 8-Ks with a key item that nothing has been recorded from. In the wrap-up the
+   * agent can't read filings any more, so only the ones it already read count.
+   */
+  async function unrecordedKeyFilings(wrapUp: boolean): Promise<string[]> {
+    const filings = await eightKs().catch(() => []);
+    const out: string[] = [];
+    for (const f of filings) {
+      if (wrapUp && !corpus.has(f.url)) continue;
+      if (signals.some((s) => s.url === f.url || s.filedAt === f.filingDate)) continue;
+      const items = [...new Set(f.text.match(/Item (\d\.\d\d)/g)?.map((m) => m.slice(5)) ?? [])].filter((i) => i in KEY_8K_ITEMS);
+      if (items.length) {
+        out.push(`${f.filingDate} (accession ${f.accession}): ${items.map((i) => `Item ${i} ${KEY_8K_ITEMS[i]}`).join(", ")}`);
+      }
+    }
+    return out;
+  }
+  let coverageChecked = false;
   /** Filing date and form of an EDGAR document, from the filing folder it sits in. */
   async function edgarDocFacts(url: string) {
     const filings = await edgarFilings().catch(() => []);
@@ -369,10 +390,22 @@ Already known: ${describeFacts(facts)}; industry "${profile.sicDescription ?? "u
       if (allowed && !allowed.has(call.function.name)) {
         result = fail("Research time is up: only record_signal and finish are available.");
       } else if (call.function.name === "finish") {
-        summary = typeof args.summary === "string" ? args.summary : "";
-        stopReason = "finished";
-        await emit({ type: "status", message: `Finished with ${signals.length} signal${signals.length === 1 ? "" : "s"}` });
-        result = ok({ finished: true });
+        // One reminder about uncovered 8-Ks, then the agent's judgment stands: finishing again ends the run.
+        const missing = coverageChecked ? [] : await unrecordedKeyFilings(Boolean(allowed));
+        coverageChecked = true;
+        if (missing.length) {
+          await emit({ type: "status", message: `Coverage check: ${missing.length} key 8-K${missing.length === 1 ? "" : "s"} with no signal recorded` });
+          result = fail(
+            `Before you finish: these 8-Ks contain items that usually mean a signal, and nothing has been recorded from them:\n- ${missing.join("\n- ")}\n` +
+              `${allowed ? "Record a signal for each that qualifies, using text you already read" : "Read each one and record the signal if it qualifies"}, then call finish again. ` +
+              "If one doesn't qualify (e.g. the officer isn't one of those listed in your instructions), just call finish again.",
+          );
+        } else {
+          summary = typeof args.summary === "string" ? args.summary : "";
+          stopReason = "finished";
+          await emit({ type: "status", message: `Finished with ${signals.length} signal${signals.length === 1 ? "" : "s"}` });
+          result = ok({ finished: true });
+        }
       } else {
         try {
           result = await runTool(call.function.name, args);

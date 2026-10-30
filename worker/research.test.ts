@@ -171,6 +171,19 @@ describe("runResearch", () => {
     expect(events.filter((e) => e.type === "tool" && e.detail.includes("repeat search skipped"))).toHaveLength(MAX_TURNS - 1);
   });
 
+  it("reminds the agent once about a key 8-K it recorded nothing from, then lets it finish", async () => {
+    const { result, nvidiaBodies, events } = await collect([
+      () => turn(toolCall("a", "finish", { summary: "Nothing found." })),
+      () => turn(toolCall("b", "finish", { summary: "The officer change doesn't qualify." })),
+    ]);
+    const firstReply = nvidiaBodies[1].messages.filter((m) => m.role === "tool").at(-1)!.content ?? "";
+    expect(firstReply).toContain("2026-06-01 (accession 0000000001-26-000002): Item 5.02 officer change");
+    expect(events).toContainEqual(expect.objectContaining({ type: "status", message: expect.stringContaining("Coverage check: 1 key 8-K") }));
+    expect(result.stopReason).toBe("finished");
+    expect(result.summary).toBe("The officer change doesn't qualify.");
+    expect(nvidiaBodies).toHaveLength(2);
+  });
+
   it("offers EDGAR tools when SEC_USER_AGENT is set", async () => {
     const nvidiaBodies = mockFetch([() => turn(toolCall("a", "finish", { summary: "done" }))]);
     await runResearch({ ...env, SEC_USER_AGENT: "Test Dev test@example.com" }, "TEST", async () => {}, NOW);
