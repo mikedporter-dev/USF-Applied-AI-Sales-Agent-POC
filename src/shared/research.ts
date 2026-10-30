@@ -112,7 +112,19 @@ export function quoteMismatch(corpus: Corpus, quote: string): string {
     if (found(mid)) lo = mid;
     else hi = mid - 1;
   }
-  if (lo < 20) return generic;
+  if (lo < 20) {
+    // The start doesn't match. If the end does, the agent likely began before the passage it was given.
+    // A suffix that appears means every shorter one does, so binary search the earliest start.
+    let from = 0;
+    let to = first.length;
+    while (from < to) {
+      const mid = Math.floor((from + to) / 2);
+      if (docs.some((d) => d.includes(first.slice(mid)))) to = mid;
+      else from = mid + 1;
+    }
+    if (first.length - from < 20) return generic;
+    return `quote was not found as written: its end matches the text you read, but its start ("${first.slice(0, Math.min(from, 60))}…") doesn't appear there. Passages can begin mid-sentence; start the quote at "${first.slice(from, from + 40)}…" or use text that's in the passage.`;
+  }
   const prefix = first.slice(0, lo);
   const doc = docs.find((d) => d.includes(prefix))!;
   const at = doc.indexOf(prefix) + lo;
@@ -215,6 +227,25 @@ export type ResearchEvent =
  * Up to `max` passages of about `radius` characters either side of each match,
  * so the agent can search long filings without reading all of them.
  */
+/** Move back to the start of the sentence (at most 300 characters), so a passage doesn't begin mid-sentence. */
+function sentenceStart(text: string, i: number): number {
+  if (i === 0) return 0;
+  const floor = Math.max(0, i - 300);
+  for (let j = i; j > floor; j--) {
+    if (text[j - 1] === "\n" || (/[.!?]/.test(text[j - 2] ?? "") && /\s/.test(text[j - 1]))) return j;
+  }
+  return floor;
+}
+
+/** Move forward to the end of the sentence (at most 300 characters). */
+function sentenceEnd(text: string, i: number): number {
+  const ceiling = Math.min(text.length, i + 300);
+  for (let j = i; j < ceiling; j++) {
+    if (text[j] === "\n" || (/[.!?]/.test(text[j]) && /\s|$/.test(text[j + 1] ?? ""))) return j + 1;
+  }
+  return ceiling;
+}
+
 export function findPassages(text: string, terms: string[], radius = 500, max = 6): string[] {
   const lower = text.toLowerCase();
   const hits: number[] = [];
@@ -229,9 +260,9 @@ export function findPassages(text: string, terms: string[], radius = 500, max = 
   const passages: string[] = [];
   let lastEnd = -1;
   for (const hit of hits) {
-    const start = Math.max(0, hit - radius);
+    const start = sentenceStart(text, Math.max(0, hit - radius));
     if (start <= lastEnd) continue; // overlaps the previous passage
-    const end = Math.min(text.length, hit + radius);
+    const end = sentenceEnd(text, Math.min(text.length, hit + radius));
     passages.push(text.slice(start, end).trim());
     lastEnd = end;
     if (passages.length >= max) break;
