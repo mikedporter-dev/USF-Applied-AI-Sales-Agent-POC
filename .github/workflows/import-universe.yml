@@ -1,0 +1,42 @@
+name: Import S&P 1500
+
+# Refreshes the S&P Composite 1500 universe in Supabase every week, and on demand
+# from the Actions tab. Only main saves; other branches do a dry run that fetches
+# and matches everything and prints a report, without the Supabase secrets.
+
+on:
+  schedule:
+    - cron: "17 11 * * 1" # Mondays 11:17 UTC
+  workflow_dispatch:
+  push:
+    branches-ignore: [main]
+    paths:
+      - scripts/import-universe.ts
+      - src/shared/universe.ts
+      - .github/workflows/import-universe.yml
+
+permissions:
+  contents: read
+
+concurrency:
+  group: import-universe-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  import:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: .node-version
+          cache: npm
+      - run: npm ci
+      - name: Import
+        run: npx tsx scripts/import-universe.ts
+        env:
+          DRY_RUN: ${{ github.ref != 'refs/heads/main' }}
+          SEC_USER_AGENT: ${{ secrets.SEC_USER_AGENT }}
+          SUPABASE_URL: ${{ github.ref == 'refs/heads/main' && secrets.SUPABASE_URL || '' }}
+          SUPABASE_SECRET_KEY: ${{ github.ref == 'refs/heads/main' && secrets.SUPABASE_SECRET_KEY || '' }}
