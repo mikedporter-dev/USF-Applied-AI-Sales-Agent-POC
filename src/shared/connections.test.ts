@@ -13,6 +13,8 @@ Di,Demo,https://www.linkedin.com/in/di-demo,,"Spectrum Health","Chief Medical Of
 Ed,Mock,https://www.linkedin.com/in/ed-mock,,Colgate-Palmolive,Analyst,03 Mar 2021
 ,,,,,,
 Fay,Fake,https://www.linkedin.com/in/fay-fake,,Apple Leisure Group,CEO,04 Apr 2023
+Gus,Phony,https://www.linkedin.com/in/gus-phony,,Universal Music Group,VP Marketing,05 May 2024
+Hal,Pretend,https://www.linkedin.com/in/hal-pretend,,Verizon Business Global,Head of Sales,06 Jun 2024
 `;
 
 const UNIVERSE: UniverseCompany[] = [
@@ -22,12 +24,13 @@ const UNIVERSE: UniverseCompany[] = [
   { cik: "0001091667", ticker: "CHTR", name: "Charter Communications", legalName: "CHARTER COMMUNICATIONS, INC. /MO/" },
   { cik: "0000021665", ticker: "CL", name: "Colgate-Palmolive", legalName: "COLGATE PALMOLIVE CO" },
   { cik: "0000320193", ticker: "AAPL", name: "Apple Inc.", legalName: "Apple Inc." },
+  { cik: "0000102037", ticker: "UVV", name: "Universal Corporation", legalName: "UNIVERSAL CORP /VA/" },
 ];
 
 describe("parseConnectionsCsv", () => {
   it("reads people, companies, titles and dates, skipping the notes and anonymous rows", () => {
     const rows = parseConnectionsCsv(CSV);
-    expect(rows).toHaveLength(6);
+    expect(rows).toHaveLength(8);
     expect(rows[0]).toEqual({ name: "Ada Example", company: "NBCUniversal Media, LLC", position: "Vice President, Data Strategy", connectedOn: "2026-10-07" });
     expect(rows[3].company).toBe("Spectrum Health");
     expect(JSON.stringify(rows)).not.toContain("@example.com"); // emails aren't kept
@@ -72,18 +75,20 @@ describe("companyKey", () => {
 describe("matchConnections", () => {
   it("keeps Manager+ connections at S&P 1500 companies, by name, brand or distinctive prefix", () => {
     const result = matchConnections(parseConnectionsCsv(CSV), companyMatcher(UNIVERSE));
-    expect(result.total).toBe(6);
-    expect(result.managerPlus).toBe(5); // the analyst is below Manager
+    expect(result.total).toBe(8);
+    expect(result.managerPlus).toBe(7); // the analyst is below Manager
     expect(result.matched.map((m) => [m.name, m.cik, m.seniority])).toEqual([
       ["Ada Example", "0001166691", "VP"], // NBCUniversal → Comcast
       ["Ben Sample", "0001744489", "Manager"],
       ["Cy Test", "0000732712", "Director"], // Verizon Business → Verizon
+      ["Hal Pretend", "0000732712", "VP"], // Verizon Business Global → Verizon
     ]);
     expect(result.matched[0].companyAsListed).toBe("NBCUniversal Media, LLC");
-    // A brand isn't matched as a prefix, and a short name isn't either.
+    // Only unit or region words may follow a listed name: Universal Music isn't Universal Corp.
     expect(result.unmatchedCompanies).toEqual([
       { company: "Spectrum Health", count: 1 },
       { company: "Apple Leisure Group", count: 1 },
+      { company: "Universal Music Group", count: 1 },
     ]);
   });
 });
