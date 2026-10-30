@@ -114,7 +114,10 @@ the S&P 1500 list supplies GICS sectors) and revenue comes from SEC's XBRL data 
 at 16 model turns and 6 EDGAR documents. The 8-K list includes the text of key items (2.01
 acquisitions, 2.05 restructurings, 5.02 officer changes), so the agent can record them without reading
 each filing. Code tracks which key 8-Ks nothing was recorded from, names them in the 4-turns-left
-reminder, and reminds the agent once more before it finishes; it decides whether they qualify. AI
+reminder, and reminds the agent once more before it finishes; it decides whether they qualify. In the
+same reminder, if the agent recorded AI commitments or mentions but no AI results at scale, it is asked
+to look for reported AI usage, customers or revenue, and companies that sell AI products with stated
+users or revenue count as AI at scale, so AI vendors are demoted rather than ranked as prospects. AI
 mentions quoted from 10-K risk factors are rejected as boilerplate. A leadership change must name the
 officer's role, which code checks: it must be a role that counts (CEO, CFO, COO, president, or a
 technology, data, digital, AI, analytics or transformation leader), appear in the quote, and not be a
