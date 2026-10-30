@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { ResearchEvent } from "../src/shared/research";
 import type { Env } from "./env";
-import { isValidTicker, keyItems, MAX_TURNS, runResearch, WRAP_UP_TURNS } from "./research";
+import { isValidTicker, keyItems, MAX_TURNS, needsResultsCheck, runResearch, WRAP_UP_TURNS } from "./research";
 
 const NOW = new Date("2026-10-29T12:00:00Z");
 const TENK_URL = "https://www.sec.gov/Archives/edgar/data/1/0000000001-26-000001.txt";
@@ -121,7 +121,9 @@ describe("runResearch", () => {
             role: "Chief Data Officer",
           }),
         ),
-      () => turn(toolCall("h", "finish", { summary: "One AI commitment and a new CDO." })),
+      () => turn(toolCall("h", "finish", { summary: "Draft." })),
+      // The results check asks once whether the AI commitment comes with results at scale; it doesn't.
+      () => turn(toolCall("i", "finish", { summary: "One AI commitment and a new CDO." })),
     ]);
 
     expect(result.stopReason).toBe("finished");
@@ -140,7 +142,8 @@ describe("runResearch", () => {
 
     // Tool results are sent back to the model, matched to each call.
     const lastRequest = nvidiaBodies.at(-1)!;
-    expect(lastRequest.messages.filter((m) => m.role === "tool")).toHaveLength(6);
+    expect(lastRequest.messages.filter((m) => m.role === "tool")).toHaveLength(7);
+    expect(lastRequest.messages.filter((m) => m.role === "tool").at(-1)?.content).toContain("no ai_scaled_results");
     // Without SEC_USER_AGENT, EDGAR tools aren't offered.
     expect(lastRequest.tools.map((t) => t.function.name)).not.toContain("read_edgar_document");
   });
@@ -177,10 +180,11 @@ describe("runResearch", () => {
         toolCall("w2", "finish", { summary: "" }),
       ),
     );
+    script.push(() => turn(toolCall("w3", "finish", { summary: "No AI results at scale." })));
     const { result, nvidiaBodies, events } = await collect(script);
     expect(result.stopReason).toBe("finished");
     expect(result.signals).toHaveLength(1);
-    expect(nvidiaBodies).toHaveLength(MAX_TURNS + 1);
+    expect(nvidiaBodies).toHaveLength(MAX_TURNS + 2); // the results check takes the second wrap-up turn
     // Repeats of the same search are skipped after the first.
     expect(events.filter((e) => e.type === "tool" && e.detail.includes("repeat search skipped"))).toHaveLength(MAX_TURNS - 1);
   });
@@ -414,6 +418,49 @@ describe("EDGAR documents", () => {
       delete massive["/submissions/CIK0000000001.json"];
       delete massive["/Archives/edgar/data/1/0001104659-25-109135.txt"];
     }
+  });
+});
+
+describe("AI results check", () => {
+  it("asks only when AI is mentioned or committed to without results at scale", () => {
+    expect(needsResultsCheck([{ kind: "ai_commitment" }])).toBe(true);
+    expect(needsResultsCheck([{ kind: "ai_mention" }, { kind: "restructuring" }])).toBe(true);
+    expect(needsResultsCheck([{ kind: "ai_commitment" }, { kind: "ai_scaled_results" }])).toBe(false);
+    expect(needsResultsCheck([{ kind: "restructuring" }])).toBe(false);
+  });
+
+  it("demotes a company once the agent records AI results at scale", async () => {
+    const { result, events } = await collect([
+      () => turn(toolCall("a", "search_10k", { section: "business", terms: ["artificial intelligence"] })),
+      () =>
+        turn(
+          toolCall("b", "record_signal", {
+            kind: "ai_commitment",
+            summary: "Commits $250 million to AI in claims.",
+            form: "10-K",
+            filed_at: "2026-02-20",
+            url: TENK_URL,
+            quote: "commits $250 million to artificial intelligence",
+          }),
+          toolCall("c", "finish", { summary: "Draft." }),
+        ),
+      () => turn(toolCall("d", "search_10k", { section: "mda", terms: ["AI demand-forecasting"] })),
+      () =>
+        turn(
+          toolCall("e", "record_signal", {
+            kind: "ai_scaled_results",
+            summary: "AI demand forecasting is in production.",
+            form: "10-K",
+            filed_at: "2026-02-20",
+            url: TENK_URL,
+            quote: "We launched an AI demand-forecasting program in 2026.",
+          }),
+          toolCall("f", "finish", { summary: "Commits to AI and already runs it in production." }),
+        ),
+    ]);
+    expect(events).toContainEqual(expect.objectContaining({ type: "status", message: expect.stringContaining("Results check") }));
+    expect(result.stopReason).toBe("finished");
+    expect(result.demoted).toBe(true);
   });
 });
 

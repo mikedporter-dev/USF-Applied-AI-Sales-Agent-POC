@@ -45,8 +45,7 @@ export function normalizeText(text: string): string {
   return text
     .replace(/\\+(["'])/g, "$1")
     .toLowerCase()
-    .replace(/[‘’]/g, "'")
-    .replace(/[“”]/g, '"')
+    .replace(/[‘’“”"]/g, "'") // filings and models mix single and double quotes freely
     .replace(/[–—]/g, "-")
     .replace(/\s+/g, " ")
     .trim();
@@ -133,6 +132,10 @@ export function quoteMismatch(corpus: Corpus, quote: string): string {
   return `quote was not found as written. It matches the text up to here: "…${yours}…" but the text reads "…${theirs}…". Copy the text exactly, including parentheses and quotation marks, or shorten the quote with "..." around the part that differs.`;
 }
 
+/** Words that show an officer arriving, leaving or changing roles. */
+const CHANGE_WORDS =
+  /\b(appoint\w*|named?|elect\w*|promot\w*|hired?|join\w*|succeed\w*|successor|depart\w*|resign\w*|retir\w*|step(s|ped|ping)? down|leav(e|es|ing)|terminat\w*|transition\w*|became|become|assum\w* the (role|position))\b/i;
+
 /** Roles whose arrival or departure can start or reshape AI work. */
 const TOP_ROLE = /\b(chief executive|chief financial|chief operating|president|ceo|cfo|coo)\b/;
 const TECH_LEADER = /\b(chief|head)\b.*\b(information|technology|digital|data|analytics|ai|artificial intelligence|transformation|innovation)\b|\b(cio|cto|cdo|caio)\b/;
@@ -201,6 +204,10 @@ export function validateSignal(args: unknown, corpus: Corpus, asOf: Date, compan
   const url = locateQuote(corpus, a.quote, a.url);
   if (!url) return quoteMismatch(corpus, a.quote);
   const doc = corpus.get(url)!;
+  // A Form 3 is itself a new officer's filing; elsewhere the quote must show someone arriving or leaving.
+  if (a.kind === "leadership_change" && doc.form !== "Form 3" && !CHANGE_WORDS.test(a.quote)) {
+    return "A leadership change needs a quote showing someone appointed, promoted, hired, leaving or retiring. Changes to pay, severance or bonus plans aren't leadership changes; don't record this one.";
+  }
 
   const signal: RecordedSignal = {
     kind: a.kind as SignalKind,

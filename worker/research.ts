@@ -157,7 +157,7 @@ Signal kinds:
 - restructuring: a restructuring or reorganization (8-K Item 2.05, or described in a filing).
 - ai_reorg: a restructuring explicitly tied to AI.
 - ai_pilot_no_results: an AI pilot or experiment with no reported outcome.
-- ai_scaled_results: AI running at scale with reported results. This lowers the company's priority, so record it when you see it.
+- ai_scaled_results: AI already working at scale, with reported results: usage, adoption, customers, savings or revenue from AI. This includes companies that sell AI products or services with stated users, customers or revenue (an AI assistant, AI platform or AI cloud). This lowers the company's priority, since it needs AI transformation help less, so record it when you see it.
 
 How to work:
 - Start broad: list the 8-Ks and new officers, and search the 10-K for AI language (terms like "artificial intelligence", "AI", "machine learning", "generative", "automation", "pilot").${
@@ -170,6 +170,7 @@ How to work:
 - Record each signal as soon as you have the evidence for it, before reading the next filing. Don't save them for the end: research stops at the turn limit, and anything unrecorded is lost.
 - 8-K items map to signals: Item 5.02 is a leadership_change (for the officers listed above), 2.01 an acquisition, 2.05 a restructuring. list_8k_filings returns these items' text, so record each that qualifies straight from it, without read_8k.
 - Follow leads. If a filing mentions an AI pilot, look for whether later filings report results.
+- When a company commits to or talks about AI, check whether it reports AI results or sells AI: search MD&A and the business section for its AI products with terms like "users", "customers", "adoption", "revenue" or "run-rate".
 - Don't repeat a search you've already run; use the passages it returned.
 - Record one signal per distinct fact; don't split one announcement into several.
 - Copy each quote exactly from text a tool returned to you. A rejected signal tells you why; fix it and try again.
@@ -485,16 +486,27 @@ Already known: ${describeFacts(facts)}; industry "${profile.sicDescription ?? "u
         result = fail("Research time is up: only record_signal and finish are available.");
         await emit({ type: "rejected", tool: call.function.name, reason: "Research time is up: only record_signal and finish are available." });
       } else if (call.function.name === "finish") {
-        // One reminder about uncovered 8-Ks, then the agent's judgment stands: finishing again ends the run.
+        // One reminder about what's often missed, then the agent's judgment stands: finishing again ends the run.
         const missing = coverageChecked ? [] : await unrecordedKeyFilings(Boolean(allowed));
+        const checkResults = !coverageChecked && needsResultsCheck(signals);
         coverageChecked = true;
-        if (missing.length) {
-          await emit({ type: "status", message: `Coverage check: ${missing.length} key 8-K${missing.length === 1 ? "" : "s"} with no signal recorded` });
-          result = fail(
-            `Before you finish: these 8-Ks contain items that usually mean a signal, and nothing has been recorded from them:\n- ${missing.join("\n- ")}\n` +
-              `${allowed ? "Record a signal for each that qualifies, using text you already read" : "Read each one and record the signal if it qualifies"}, then call finish again. ` +
-              "If one doesn't qualify (e.g. the officer isn't one of those listed in your instructions), just call finish again.",
-          );
+        if (missing.length || checkResults) {
+          const how = allowed ? "using text you already read" : "reading or searching what you need";
+          const parts: string[] = [];
+          if (missing.length) {
+            await emit({ type: "status", message: `Coverage check: ${missing.length} key 8-K${missing.length === 1 ? "" : "s"} with no signal recorded` });
+            parts.push(
+              `These 8-Ks contain items that usually mean a signal, and nothing has been recorded from them:\n- ${missing.join("\n- ")}\n` +
+                `Record a signal for each that qualifies, ${how}. If one doesn't qualify (e.g. the officer isn't one of those listed in your instructions), skip it.`,
+            );
+          }
+          if (checkResults) {
+            await emit({ type: "status", message: "Results check: AI commitments recorded, but no AI results at scale" });
+            parts.push(
+              `You recorded AI commitments or mentions but no ai_scaled_results. Check, ${how}, whether the company reports AI usage, adoption, customers or revenue at scale, or sells AI products; if it does, record ai_scaled_results with the quote.`,
+            );
+          }
+          result = fail(`Before you finish:\n${parts.join("\n")}\nThen call finish again.`);
         } else {
           summary = typeof args.summary === "string" ? args.summary : "";
           stopReason = "finished";
@@ -619,4 +631,9 @@ function describeFacts(facts: CompanyFacts): string {
   const sector = facts.gicsSector ? `${facts.gicsSector} (${facts.index ? `GICS, ${facts.index}` : "from SIC code"})` : "sector unknown";
   const revenue = facts.revenueUsd ? `revenue $${(facts.revenueUsd / 1e9).toFixed(1)}B (SEC XBRL)` : "revenue not found";
   return `${sector} · ${revenue}`;
+}
+
+/** Whether to ask, before finishing, if a company that talks about AI already reports AI working at scale. */
+export function needsResultsCheck(signals: { kind: string }[]): boolean {
+  return signals.some((s) => s.kind === "ai_commitment" || s.kind === "ai_mention") && !signals.some((s) => s.kind === "ai_scaled_results");
 }
