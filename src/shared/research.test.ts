@@ -93,6 +93,17 @@ describe("validateSignal", () => {
     expect(result).toContain('the company (the "board") elected');
   });
 
+  it("says when a quote starts before the passage the agent was given", () => {
+    const c: Corpus = new Map();
+    addToCorpus(c, URL_A, "ing the power of best-in-class demand generation; leading in capabilities such as data and AI.", {
+      source: "massive",
+      filedAt: "2026-02-23",
+    });
+    const result = validateSignal({ ...valid, quote: "leveraging the power of best-in-class demand generation; leading in capabilities" }, c, NOW);
+    expect(result).toContain("its end matches");
+    expect(result).toContain('start the quote at "ing the power');
+  });
+
   it("rejects an ellipsis that would stitch together passages far apart", () => {
     const c: Corpus = new Map();
     addToCorpus(c, URL_A, `We will not invest in new AI programs. ${"Unrelated text. ".repeat(200)} We expect strong growth in pet nutrition.`, {
@@ -105,6 +116,13 @@ describe("validateSignal", () => {
 });
 
 describe("findPassages", () => {
+  it("starts and ends passages on sentence boundaries", () => {
+    const text = `${"Filler sentence here. ".repeat(40)}We are leading in capabilities such as AI across the business. ${"More filler text. ".repeat(40)}`;
+    const [passage] = findPassages(text, ["AI across"], 200);
+    expect(passage).toMatch(/^Filler sentence here\./);
+    expect(passage).toMatch(/\.$/);
+  });
+
   it("returns non-overlapping passages around each match", () => {
     const text = `${"x".repeat(2000)} artificial intelligence ${"y".repeat(2000)} AI pilot ${"z".repeat(100)}`;
     const passages = findPassages(text, ["artificial intelligence", "ai pilot"], 50);

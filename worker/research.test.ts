@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { ResearchEvent } from "../src/shared/research";
 import type { Env } from "./env";
-import { isValidTicker, MAX_TURNS, runResearch, WRAP_UP_TURNS } from "./research";
+import { isValidTicker, keyItems, MAX_TURNS, runResearch, WRAP_UP_TURNS } from "./research";
 
 const NOW = new Date("2026-10-29T12:00:00Z");
 const TENK_URL = "https://www.sec.gov/Archives/edgar/data/1/0000000001-26-000001.txt";
@@ -26,6 +26,12 @@ const massive: Record<string, unknown> = {
         filing_date: "2026-02-20",
         filing_url: TENK_URL,
         text: "Our 2030 plan commits $250 million to artificial intelligence across claims processing. Other text follows.",
+      },
+      {
+        section: "risk_factors",
+        filing_date: "2026-02-20",
+        filing_url: TENK_URL,
+        text: "Competitors' use of artificial intelligence may reduce demand for our products.",
       },
     ],
   },
@@ -145,6 +151,7 @@ describe("runResearch", () => {
     expect(nvidiaBodies[MAX_TURNS].tools.map((t) => t.function.name).sort()).toEqual(["finish", "record_signal"]);
     const lastToolResult = nvidiaBodies.at(-1)!.messages.filter((m) => m.role === "tool").at(-1)!;
     expect(lastToolResult.content).toContain("only record_signal");
+    expect(events).toContainEqual(expect.objectContaining({ type: "rejected", tool: "list_8k_filings", reason: expect.stringContaining("time is up") }));
     expect(events.filter((e) => e.type === "status" && e.message.startsWith("Wrapping up"))).toHaveLength(WRAP_UP_TURNS);
   });
 
@@ -226,6 +233,64 @@ describe("company facts", () => {
     const result = await runResearch(env, "TEST", async () => {}, NOW);
     expect(result.company.industry).toBe("Financials");
     expect(result.company.revenueUsd).toBeUndefined();
+  });
+});
+
+describe("key 8-K items", () => {
+  it("come with the filing list, so the agent can record them without reading each 8-K", async () => {
+    const { result, nvidiaBodies, events } = await collect([
+      () => turn(toolCall("a", "list_8k_filings", {})),
+      () =>
+        turn(
+          toolCall("b", "record_signal", {
+            kind: "leadership_change",
+            summary: "New Chief Data Officer appointed.",
+            form: "8-K",
+            filed_at: "2026-06-01",
+            url: EIGHTK_URL,
+            quote: "appointed Jane Roe as Chief Data Officer",
+          }),
+          toolCall("c", "finish", { summary: "A new CDO." }),
+        ),
+    ]);
+    const listing = JSON.parse(nvidiaBodies[1].messages.filter((m) => m.role === "tool").at(-1)!.content!);
+    expect(listing[0].key_items[0]).toMatchObject({ item: "5.02", signal: "officer change" });
+    expect(events).toContainEqual(expect.objectContaining({ type: "tool", detail: "1 8-K filings, 1 with key items" }));
+    expect(result.signals).toHaveLength(1);
+    expect(result.stopReason).toBe("finished"); // covered, so no coverage reminder
+  });
+
+  it("splits on item headings, not on references to items inside the text", () => {
+    const text = "Item 2.02. Results.\nThe information in Item 2.05 of this report is furnished.\nItem 2.05. Costs Associated with Exit.\nThe Board approved an expansion.\nItem 9.01. Exhibits.";
+    expect(keyItems(text)).toEqual([{ item: "2.05", text: "Item 2.05. Costs Associated with Exit.\nThe Board approved an expansion." }]);
+  });
+
+  it("are named in the reminder near the turn limit until something is recorded from them", async () => {
+    const { nvidiaBodies } = await collect([]);
+    const reminder = nvidiaBodies[MAX_TURNS - 1].messages.filter((m) => m.role === "user").at(-1)!.content ?? "";
+    expect(reminder).toContain("Key 8-Ks with nothing recorded yet");
+    expect(reminder).toContain("Item 5.02 officer change");
+  });
+});
+
+describe("AI mentions", () => {
+  it("can't come from risk-factor boilerplate", async () => {
+    const { result, events } = await collect([
+      () => turn(toolCall("a", "search_10k", { section: "risk_factors", terms: ["artificial intelligence"] })),
+      () =>
+        turn(
+          toolCall("b", "record_signal", {
+            kind: "ai_mention",
+            summary: "Mentions competitors' use of AI.",
+            form: "10-K",
+            filed_at: "2026-02-20",
+            url: TENK_URL,
+            quote: "Competitors' use of artificial intelligence may reduce demand",
+          }),
+        ),
+    ]);
+    expect(result.signals).toHaveLength(0);
+    expect(events).toContainEqual(expect.objectContaining({ type: "rejected", reason: expect.stringContaining("Risk-factor language") }));
   });
 });
 

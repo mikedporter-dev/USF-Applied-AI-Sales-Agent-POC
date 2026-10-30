@@ -3,6 +3,7 @@ import {
   type CompanyFacts,
   type Corpus,
   findPassages,
+  locateQuote,
   type RecordedSignal,
   type ResearchEvent,
   type ResearchResult,
@@ -32,6 +33,16 @@ const REMIND_AT = 4;
 const WRAP_UP_TOOLS = new Set(["record_signal", "finish"]);
 /** 8-K items that usually mean a signal; code checks they were covered before the agent finishes. */
 const KEY_8K_ITEMS: Record<string, string> = { "2.01": "acquisition", "2.05": "restructuring", "5.02": "officer change" };
+/** Characters of each key 8-K item returned with the filing list. */
+const KEY_ITEM_CHARS = 2000;
+
+/** The text of each key item in an 8-K, so the agent can record it without a separate read. */
+export function keyItems(text: string): { item: string; text: string }[] {
+  return text
+    .split(/\n(?=Item \d\.\d\d\b)/) // item headings start a line; mid-sentence references don't
+    .map((part) => ({ item: part.match(/^Item (\d\.\d\d)/)?.[1] ?? "", text: part.trim().slice(0, KEY_ITEM_CHARS) }))
+    .filter((p) => p.item in KEY_8K_ITEMS);
+}
 /** EDGAR documents fetched per run, to bound time and CPU. */
 const MAX_EDGAR_READS = 6;
 /** Characters of text returned per read, so tool results stay a manageable size. */
@@ -53,10 +64,14 @@ const SECTION = { type: "string", enum: ["business", "risk_factors", "mda"] };
 
 function toolDefinitions(withEdgar: boolean): ToolDefinition[] {
   const tools = [
-    fn("list_8k_filings", "List the company's 8-K filings in the window, with the Item headings each one contains.", {}),
+    fn(
+      "list_8k_filings",
+      "List the company's 8-K filings in the window with the Item headings each contains, and the full text of key items (2.01 acquisitions, 2.05 restructurings, 5.02 officer changes), which you can quote from directly.",
+      {},
+    ),
     fn(
       "read_8k",
-      "Read the item text of one 8-K (officer changes are Item 5.02, acquisitions 2.01, restructurings 2.05).",
+      "Read all the item text of one 8-K. Key items already come with list_8k_filings, so use this for other items.",
       { accession: { type: "string", description: "accession number from list_8k_filings" } },
       ["accession"],
     ),
@@ -145,7 +160,7 @@ How to work:
   }
 - Call several tools in one turn when they don't depend on each other, e.g. list_8k_filings, list_new_officers and search_10k together.
 - Record each signal as soon as you have the evidence for it, before reading the next filing. Don't save them for the end: research stops at the turn limit, and anything unrecorded is lost.
-- 8-K items map to signals: Item 5.02 is a leadership_change (for the officers listed above), 2.01 an acquisition, 2.05 a restructuring. Record each one you read.
+- 8-K items map to signals: Item 5.02 is a leadership_change (for the officers listed above), 2.01 an acquisition, 2.05 a restructuring. list_8k_filings returns these items' text, so record each that qualifies straight from it, without read_8k.
 - Follow leads. If a filing mentions an AI pilot, look for whether later filings report results.
 - Don't repeat a search you've already run; use the passages it returned.
 - Record one signal per distinct fact; don't split one announcement into several.
@@ -174,6 +189,8 @@ export async function runResearch(env: Env, ticker: string, emit: Emit, now = ne
   });
 
   const corpus: Corpus = new Map();
+  /** 10-K risk-factor text read this run: boilerplate there doesn't count as an AI mention. */
+  const riskFactors: Corpus = new Map();
   const signals: RecordedSignal[] = [];
   const facts = await companyFacts(env, profile, withEdgar);
   await emit({ type: "status", message: describeFacts(facts) });
@@ -210,7 +227,7 @@ export async function runResearch(env: Env, ticker: string, emit: Emit, now = ne
     for (const f of filings) {
       if (wrapUp && !corpus.has(f.url)) continue;
       if (signals.some((s) => s.url === f.url || s.filedAt === f.filingDate)) continue;
-      const items = [...new Set(f.text.match(/Item (\d\.\d\d)/g)?.map((m) => m.slice(5)) ?? [])].filter((i) => i in KEY_8K_ITEMS);
+      const items = [...new Set(keyItems(f.text).map((k) => k.item))];
       if (items.length) {
         out.push(`${f.filingDate} (accession ${f.accession}): ${items.map((i) => `Item ${i} ${KEY_8K_ITEMS[i]}`).join(", ")}`);
       }
@@ -236,6 +253,12 @@ export async function runResearch(env: Env, ticker: string, emit: Emit, now = ne
   };
   const ACCESSION_HELP = fail("accession is required, like 0000021665-26-000022: copy it from list_8k_filings or list_edgar_filings.");
 
+  function addTenK(sec: massive.TenKSection, text: string) {
+    const facts = { source: "massive" as const, filedAt: sec.filingDate, form: "10-K" as const };
+    addToCorpus(corpus, sec.url, text, facts);
+    if (sec.section === "risk_factors") addToCorpus(riskFactors, sec.url, text, facts);
+  }
+
   async function tenKSection(section: string) {
     const sections = await tenK();
     return sections.find((s) => s.section === section);
@@ -245,14 +268,21 @@ export async function runResearch(env: Env, ticker: string, emit: Emit, now = ne
     switch (name) {
       case "list_8k_filings": {
         const list = await eightKs();
-        await emit({ type: "tool", name, detail: `${list.length} 8-K filings` });
+        const withKeyItems = list.filter((f) => keyItems(f.text).length).length;
+        await emit({ type: "tool", name, detail: `${list.length} 8-K filings, ${withKeyItems} with key items` });
         return ok(
-          list.map((f) => ({
-            accession: f.accession,
-            filing_date: f.filingDate,
-            form: f.formType,
-            items: f.text.match(/Item \d+\.\d+\.?[^\n]{0,90}/g)?.slice(0, 6) ?? [],
-          })),
+          list.map((f) => {
+            const key = keyItems(f.text);
+            for (const k of key) addToCorpus(corpus, f.url, k.text, { source: "massive", filedAt: f.filingDate, form: "8-K" });
+            return {
+              accession: f.accession,
+              filing_date: f.filingDate,
+              form: f.formType,
+              url: f.url,
+              items: f.text.match(/Item \d+\.\d+\.?[^\n]{0,90}/g)?.slice(0, 6) ?? [],
+              ...(key.length ? { key_items: key.map((k) => ({ item: k.item, signal: KEY_8K_ITEMS[k.item], text: k.text })) } : {}),
+            };
+          }),
         );
       }
       case "read_8k": {
@@ -274,7 +304,7 @@ export async function runResearch(env: Env, ticker: string, emit: Emit, now = ne
           return REPEAT_NOTE;
         }
         const passages = findPassages(sec.text, terms);
-        for (const p of passages) addToCorpus(corpus, sec.url, p, { source: "massive", filedAt: sec.filingDate, form: "10-K" });
+        for (const p of passages) addTenK(sec, p);
         await emit({ type: "tool", name, detail: `10-K ${sec.section}: "${terms.join('", "')}" → ${passages.length} passages` });
         return ok({ filing_date: sec.filingDate, url: sec.url, passages });
       }
@@ -284,7 +314,7 @@ export async function runResearch(env: Env, ticker: string, emit: Emit, now = ne
         const part = Math.max(1, Number(args.part) || 1);
         const parts = Math.max(1, Math.ceil(sec.text.length / CHUNK_CHARS));
         const text = sec.text.slice((part - 1) * CHUNK_CHARS, part * CHUNK_CHARS);
-        addToCorpus(corpus, sec.url, text, { source: "massive", filedAt: sec.filingDate, form: "10-K" });
+        addTenK(sec, text);
         await emit({ type: "tool", name, detail: `10-K ${sec.section}, part ${part} of ${parts}` });
         return ok({ filing_date: sec.filingDate, url: sec.url, part, parts, text });
       }
@@ -341,7 +371,10 @@ export async function runResearch(env: Env, ticker: string, emit: Emit, now = ne
         return ok({ url, part, parts, text: chunk });
       }
       case "record_signal": {
-        const result = validateSignal(args, corpus, now);
+        const result =
+          args.kind === "ai_mention" && typeof args.quote === "string" && locateQuote(riskFactors, args.quote)
+            ? "Risk-factor language doesn't count as an ai_mention: it's boilerplate most companies share. Use the business section or MD&A."
+            : validateSignal(args, corpus, now);
         if (typeof result === "string") {
           await emit({ type: "rejected", tool: name, reason: result, attempted: typeof args.quote === "string" ? args.quote : undefined });
           return fail(result);
@@ -389,6 +422,7 @@ Already known: ${describeFacts(facts)}; industry "${profile.sicDescription ?? "u
       }
       if (allowed && !allowed.has(call.function.name)) {
         result = fail("Research time is up: only record_signal and finish are available.");
+        await emit({ type: "rejected", tool: call.function.name, reason: "Research time is up: only record_signal and finish are available." });
       } else if (call.function.name === "finish") {
         // One reminder about uncovered 8-Ks, then the agent's judgment stands: finishing again ends the run.
         const missing = coverageChecked ? [] : await unrecordedKeyFilings(Boolean(allowed));
@@ -422,9 +456,12 @@ Already known: ${describeFacts(facts)}; industry "${profile.sicDescription ?? "u
     await takeTurn(`Thinking (turn ${turn} of ${MAX_TURNS})`, tools);
     const left = MAX_TURNS - turn;
     if (summary === undefined && left > 0 && left <= REMIND_AT) {
+      const missing = await unrecordedKeyFilings(false);
       messages.push({
         role: "user",
-        content: `${left} turn${left === 1 ? "" : "s"} left. Record the signals you have evidence for with record_signal, then finish.`,
+        content:
+          `${left} turn${left === 1 ? "" : "s"} left. Record the signals you have evidence for with record_signal, then finish.` +
+          (missing.length ? `\nKey 8-Ks with nothing recorded yet (record each that qualifies):\n- ${missing.join("\n- ")}` : ""),
       });
     }
   }

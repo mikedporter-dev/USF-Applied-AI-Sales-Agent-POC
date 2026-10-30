@@ -111,8 +111,11 @@ from the document the quote was found in, not from the agent. Facts are filled i
 agent: the sector is mapped from the company's SIC code (`src/shared/sic.ts`, an approximation until
 the S&P 1500 list supplies GICS sectors) and revenue comes from SEC's XBRL data for the latest 10-K
 (needs `SEC_USER_AGENT`). Scoring uses `src/shared/scoring.ts`. A run is capped
-at 16 model turns and 6 EDGAR documents. Before it finishes, code checks for 8-Ks with Item 2.01, 2.05 or 5.02
-that nothing was recorded from and reminds the agent once; it decides whether they qualify. In the last
+at 16 model turns and 6 EDGAR documents. The 8-K list includes the text of key items (2.01
+acquisitions, 2.05 restructurings, 5.02 officer changes), so the agent can record them without reading
+each filing. Code tracks which key 8-Ks nothing was recorded from, names them in the 4-turns-left
+reminder, and reminds the agent once more before it finishes; it decides whether they qualify. AI
+mentions quoted from 10-K risk factors are rejected as boilerplate. In the last
 4 turns the agent is reminded to record what it has; if it still hasn't finished, it gets 2 wrap-up turns in which it can only record findings and
 finish. Progress streams to the page as newline-delimited JSON from `POST /api/research`.
 
