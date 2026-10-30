@@ -111,8 +111,9 @@ from the document the quote was found in, not from the agent. Facts are filled i
 agent: the sector is mapped from the company's SIC code (`src/shared/sic.ts`, an approximation until
 the S&P 1500 list supplies GICS sectors) and revenue comes from SEC's XBRL data for the latest 10-K
 (needs `SEC_USER_AGENT`). Scoring uses `src/shared/scoring.ts`. A run is capped
-at 16 model turns and 6 EDGAR documents. In the last 4 turns the agent is reminded to record what it
-has; if it still hasn't finished, it gets 2 wrap-up turns in which it can only record findings and
+at 16 model turns and 6 EDGAR documents. Before it finishes, code checks for 8-Ks with Item 2.01, 2.05 or 5.02
+that nothing was recorded from and reminds the agent once; it decides whether they qualify. In the last
+4 turns the agent is reminded to record what it has; if it still hasn't finished, it gets 2 wrap-up turns in which it can only record findings and
 finish. Progress streams to the page as newline-delimited JSON from `POST /api/research`.
 
 It needs the `NVIDIA_API_KEY` and `MASSIVE_API_KEY` secrets. `SEC_USER_AGENT` is optional: SEC
