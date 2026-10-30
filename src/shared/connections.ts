@@ -143,11 +143,16 @@ const ALIASES: Record<string, string[]> = {
   META: ["meta", "facebook", "instagram", "whatsapp", "oculus", "reality labs", "meta reality labs"],
   MSFT: ["linkedin", "github", "xbox", "microsoft gaming", "activision blizzard", "activision", "blizzard entertainment", "bethesda softworks"],
   "FOXA FOX": ["fox sports", "fox news", "fox news media", "fox entertainment", "fox television stations", "tubi"],
-  "PSKY PARA": [
-    "paramount", "paramount global", "paramount pictures", "paramount streaming", "cbs", "cbs news", "cbs sports",
-    "cbs interactive", "nickelodeon", "showtime", "mtv", "pluto tv", "skydance", "skydance media", "skydance animation",
+  // Paramount and Warner Bros. Discovery merged into Skydance Corporation (SKYD).
+  "SKYD PSKY PARA": [
+    "paramount", "paramount global", "paramount skydance", "paramount pictures", "paramount streaming", "cbs", "cbs news",
+    "cbs sports", "cbs interactive", "nickelodeon", "showtime", "mtv", "pluto tv", "skydance media", "skydance animation",
   ],
-  WBD: ["warner bros", "warnermedia", "hbo", "hbo max", "max", "cnn", "discovery", "warner bros games", "tnt sports", "turner sports", "dc studios"],
+  "SKYD WBD": [
+    "warner bros discovery", "warner bros", "warner bros entertainment", "warner bros pictures", "warner bros television",
+    "warner bros games", "warnermedia", "discovery", "discovery communications", "hbo", "hbo max", "max", "cnn",
+    "tnt sports", "turner sports", "dc studios",
+  ],
   CHTR: ["spectrum", "spectrum networks", "spectrum reach"],
   TMUS: ["t mobile"],
   "NWSA NWS": ["dow jones", "wall street journal"],

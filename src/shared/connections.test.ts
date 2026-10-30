@@ -25,6 +25,7 @@ const UNIVERSE: UniverseCompany[] = [
   { cik: "0000021665", ticker: "CL", name: "Colgate-Palmolive", legalName: "COLGATE PALMOLIVE CO" },
   { cik: "0000320193", ticker: "AAPL", name: "Apple Inc.", legalName: "Apple Inc." },
   { cik: "0000102037", ticker: "UVV", name: "Universal Corporation", legalName: "UNIVERSAL CORP /VA/" },
+  { cik: "0002041610", ticker: "SKYD", name: "Skydance Corporation", legalName: "Skydance Corp" },
 ];
 
 describe("parseConnectionsCsv", () => {
@@ -90,6 +91,19 @@ describe("matchConnections", () => {
       { company: "Apple Leisure Group", count: 1 },
       { company: "Universal Music Group", count: 1 },
     ]);
+  });
+});
+
+describe("company aliases", () => {
+  it("send Paramount and Warner Bros. Discovery brands to the merged Skydance Corporation", () => {
+    const matcher = companyMatcher(UNIVERSE);
+    for (const name of ["Paramount", "Paramount+", "CBS News", "Warner Bros. Discovery", "HBO", "Skydance"]) {
+      expect(matcher.match(name)?.ticker, name).toBe("SKYD");
+    }
+  });
+
+  it("are ignored when the parent isn't in the S&P 1500", () => {
+    expect(companyMatcher(UNIVERSE.filter((c) => c.ticker !== "SKYD")).match("Paramount")).toBeUndefined();
   });
 });
 
