@@ -66,6 +66,8 @@ export interface ChatOptions {
   maxTokens?: number;
   /** Nemotron thinks before answering by default; false asks for a direct answer. */
   thinking?: boolean;
+  /** How long to wait for an answer. */
+  timeoutMs?: number;
 }
 
 /** Longest message accepted by /api/chat. */
@@ -86,7 +88,7 @@ export function finalAnswer(content: string | null | undefined): string {
 async function complete(
   env: Env,
   body: { messages: unknown[]; tools?: ToolDefinition[] },
-  { maxTokens = 8192, thinking = true }: ChatOptions,
+  { maxTokens = 8192, thinking = true, timeoutMs = TIMEOUT_MS }: ChatOptions,
 ): Promise<ChatCompletion["choices"][number] | undefined> {
   if (!env.NVIDIA_API_KEY) throw new Error("NVIDIA_API_KEY is not configured");
 
@@ -104,7 +106,12 @@ async function complete(
       ...SAMPLING,
       ...(thinking ? {} : { chat_template_kwargs: { enable_thinking: false } }),
     }),
-    signal: AbortSignal.timeout(TIMEOUT_MS),
+    signal: AbortSignal.timeout(timeoutMs),
+  }).catch((err: unknown) => {
+    if (err instanceof Error && err.name === "TimeoutError") {
+      throw new Error(`NVIDIA didn't answer within ${Math.round(timeoutMs / 1000)} seconds`);
+    }
+    throw err;
   });
   if (!res.ok) throw new Error(`NVIDIA API ${res.status}: ${await res.text()}`);
   return ((await res.json()) as ChatCompletion).choices[0];

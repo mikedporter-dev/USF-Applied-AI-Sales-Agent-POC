@@ -47,6 +47,12 @@ export function keyItems(text: string): { item: string; text: string }[] {
 const MAX_EDGAR_READS = 6;
 /** Characters of text returned per read, so tool results stay a manageable size. */
 const CHUNK_CHARS = 8000;
+/** How long one model turn may take; a turn that runs over is retried once without thinking. */
+const TURN_TIMEOUT_MS = 90_000;
+/** Large filing text older than this many turns is replaced with a note, so each turn stays fast. */
+const KEEP_FULL_TURNS = 3;
+const TRIMMABLE_TOOLS = new Set(["read_8k", "read_10k", "read_edgar_document", "search_10k"]);
+const TRIM_OVER_CHARS = 3000;
 
 type Emit = (event: ResearchEvent) => Promise<void>;
 
@@ -196,12 +202,18 @@ export async function runResearch(env: Env, ticker: string, emit: Emit, now = ne
   await emit({ type: "status", message: describeFacts(facts) });
   let summary: string | undefined;
   let edgarReads = 0;
-  const searchesRun = new Set<string>();
-  /** True if this exact search already ran this session; repeats waste the agent's turns. */
+  /** Each search run this session, and the tool call whose result holds its passages. */
+  const searchesRun = new Map<string, string>();
+  /** Results trimmed from the conversation (by tool call id), which the agent can no longer see. */
+  const trimmed = new Set<string>();
+  /** The tool call being run, so a search can be tied to the result that shows it. */
+  let currentCallId = "";
+  /** True if this exact search already ran and its passages are still visible; repeats waste the agent's turns. */
   const repeated = (where: string, terms: string[]) => {
     const key = `${where}|${terms.map((t) => t.toLowerCase().trim()).sort().join("|")}`;
-    if (searchesRun.has(key)) return true;
-    searchesRun.add(key);
+    const earlier = searchesRun.get(key);
+    if (earlier !== undefined && !trimmed.has(earlier)) return true;
+    searchesRun.set(key, currentCallId);
     return false;
   };
   const REPEAT_NOTE = ok({ note: "You already ran this exact search. Use the passages it returned, or record what you found." });
@@ -400,10 +412,54 @@ Already known: ${describeFacts(facts)}; industry "${profile.sicDescription ?? "u
 
   let stopReason: ResearchResult["stopReason"] = "step_limit";
 
+  /** Tool name for each call, so old results can be trimmed by tool. */
+  const callNames = new Map<string, string>();
+
+  /**
+   * Replace large filing text the agent read more than KEEP_FULL_TURNS turns ago
+   * with a short note. Every turn resends the whole conversation, so this keeps
+   * turns fast. The text stays in the corpus, so quotes from it are still checked.
+   */
+  function trimOldResults() {
+    const assistantAt = messages.flatMap((m, i) => (m.role === "assistant" ? [i] : []));
+    const cutoff = assistantAt[assistantAt.length - KEEP_FULL_TURNS];
+    if (cutoff === undefined) return;
+    for (let i = 0; i < cutoff; i++) {
+      const m = messages[i];
+      if (m.role === "tool" && (m.content?.length ?? 0) > TRIM_OVER_CHARS && TRIMMABLE_TOOLS.has(callNames.get(m.tool_call_id) ?? "")) {
+        trimmed.add(m.tool_call_id);
+        messages[i] = {
+          ...m,
+          content: ok({ note: "Text read earlier, trimmed to keep the conversation short. Call the tool again to see it; it won't be downloaded twice." }),
+        };
+      }
+    }
+  }
+
+  /** Ask the model for its next move. A turn that times out is retried once without thinking, which is faster. */
+  async function nextMove(turnTools: ToolDefinition[]) {
+    try {
+      return await chatWithTools(env, messages, turnTools, { maxTokens: 6144, timeoutMs: TURN_TIMEOUT_MS });
+    } catch (err) {
+      await emit({ type: "status", message: `${err instanceof Error ? err.message : "The model failed"}; retrying without thinking` });
+      return chatWithTools(env, messages, turnTools, { maxTokens: 4096, thinking: false, timeoutMs: TURN_TIMEOUT_MS });
+    }
+  }
+
   /** One model turn: call the model, then run each tool it asks for (only `allowed` ones, if given). */
   async function takeTurn(label: string, turnTools: ToolDefinition[], allowed?: Set<string>) {
     await emit({ type: "status", message: label });
-    const reply = await chatWithTools(env, messages, turnTools, { maxTokens: 6144 });
+    trimOldResults();
+    let reply: Awaited<ReturnType<typeof chatWithTools>>;
+    try {
+      reply = await nextMove(turnTools);
+    } catch (err) {
+      // Keep what was recorded rather than losing the whole run.
+      stopReason = "model_error";
+      summary = "";
+      await emit({ type: "rejected", tool: "model", reason: `${err instanceof Error ? err.message : "The model failed"} twice; ending with what was recorded.` });
+      return;
+    }
 
     if (reply.toolCalls.length === 0) {
       messages.push({ role: "assistant", content: reply.content || "(no answer)" });
@@ -413,6 +469,7 @@ Already known: ${describeFacts(facts)}; industry "${profile.sicDescription ?? "u
 
     messages.push({ role: "assistant", content: reply.content || null, tool_calls: reply.toolCalls });
     for (const call of reply.toolCalls) {
+      callNames.set(call.id, call.function.name);
       let args: Record<string, unknown> = {};
       let result: string;
       try {
@@ -442,6 +499,7 @@ Already known: ${describeFacts(facts)}; industry "${profile.sicDescription ?? "u
         }
       } else {
         try {
+          currentCallId = call.id;
           result = await runTool(call.function.name, args);
         } catch (err) {
           result = fail(err instanceof Error ? err.message : "Tool failed");
