@@ -39,6 +39,8 @@ const DEFAULT_INDUSTRY_FIT = 0.6;
 
 const INTENT_POINTS: Partial<Record<SignalKind, { points: number; max: number }>> = {
   ai_commitment: { points: 25, max: 50 },
+  // Generic AI language: a weak signal, capped so it can never rival one concrete commitment.
+  ai_mention: { points: 5, max: 10 },
   ai_reorg: { points: 25, max: 25 },
   leadership_change: { points: 20, max: 20 },
   acquisition: { points: 15, max: 15 },
@@ -51,6 +53,7 @@ const SENIORITY_ORDER: Seniority[] = ["Manager", "Director", "VP", "C-Suite", "O
 
 export const SIGNAL_LABELS: Record<SignalKind, string> = {
   ai_commitment: "AI commitment",
+  ai_mention: "AI mention",
   leadership_change: "Leadership change",
   acquisition: "Acquisition",
   restructuring: "Restructuring",

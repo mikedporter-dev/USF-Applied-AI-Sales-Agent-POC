@@ -6,6 +6,7 @@ import type { FilingForm, Scores, Signal, SignalKind, SignalSource, Tier } from 
 
 export const SIGNAL_KINDS: readonly SignalKind[] = [
   "ai_commitment",
+  "ai_mention",
   "leadership_change",
   "acquisition",
   "restructuring",

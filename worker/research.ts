@@ -125,7 +125,8 @@ Find evidence in SEC filings from ${windowStart} to ${today} (the last ${WINDOW_
 Filings older than the window don't count.
 
 Signal kinds:
-- ai_commitment: a concrete AI investment, program, target or dated goal. Generic "we use AI" or "AI is a risk" language doesn't count.
+- ai_commitment: a concrete AI investment, program, target or dated goal.
+- ai_mention: the company names AI as a priority, capability or focus area, but with no concrete investment, program, target or date (e.g. "leading in capabilities such as data, analytics and AI"). It counts for less. Record at most 2, the clearest. Risk-factor boilerplate ("AI may pose risks", "competitors may use AI") doesn't count.
 - leadership_change: a new or departing officer who would sponsor or shape AI work: CEO, CFO, COO, president, or a technology, data, digital, AI, analytics or transformation leader (8-K Item 5.02, Form 3). Legal, HR, accounting and other officers don't count, and directors are not officers.
 - acquisition: a completed acquisition (8-K Item 2.01).
 - restructuring: a restructuring or reorganization (8-K Item 2.05, or described in a filing).
