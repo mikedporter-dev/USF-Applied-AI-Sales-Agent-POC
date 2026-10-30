@@ -3,6 +3,11 @@ import type { Env } from "./env";
 // Massive (massive.com) REST API: company reference data and parsed SEC filing text.
 
 const TIMEOUT_MS = 30_000;
+/** Massive rate-limits by plan; a 429 is retried after a pause instead of failing the run. */
+const RATE_LIMIT_RETRIES = 3;
+const RATE_LIMIT_WAIT_MS = 20_000;
+
+const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 
 export function isConfigured(env: Env): boolean {
   return Boolean(env.MASSIVE_API_KEY);
@@ -12,10 +17,16 @@ async function get<T>(env: Env, path: string, params: Record<string, string | nu
   if (!env.MASSIVE_API_KEY) throw new Error("MASSIVE_API_KEY is not configured");
   const url = new URL(path, env.MASSIVE_BASE_URL);
   for (const [k, v] of Object.entries(params)) url.searchParams.set(k, String(v));
-  const res = await fetch(url, {
-    headers: { Authorization: `Bearer ${env.MASSIVE_API_KEY}` },
-    signal: AbortSignal.timeout(TIMEOUT_MS),
-  });
+  let res: Response;
+  for (let attempt = 0; ; attempt++) {
+    res = await fetch(url, {
+      headers: { Authorization: `Bearer ${env.MASSIVE_API_KEY}` },
+      signal: AbortSignal.timeout(TIMEOUT_MS),
+    });
+    if (res.status !== 429 || attempt >= RATE_LIMIT_RETRIES) break;
+    const retryAfter = Number(res.headers.get("Retry-After"));
+    await sleep(retryAfter > 0 ? retryAfter * 1000 : RATE_LIMIT_WAIT_MS * (attempt + 1));
+  }
   if (!res.ok) throw new Error(`Massive API ${res.status} for ${path}: ${(await res.text()).slice(0, 300)}`);
   return (await res.json()) as T;
 }

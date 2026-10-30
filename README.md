@@ -138,6 +138,7 @@ Run the files in `supabase/migrations/` in order in the Supabase SQL editor, or 
 3. `0003_ai_mention_signal.sql`: the `ai_mention` signal kind (run on its own, outside a transaction)
 4. `0004_universe_import.sql`: S&P 1500 import columns on `companies`
 5. `0005_linkedin_connections.sql`: `companies.legal_name`; `connections.company_as_listed` and `imported_at`
+6. `0006_saved_research.sql`: `research_runs`; `signals.quote` and `research_run_id`
 
 To test with fictional data, run `supabase/seed/sample_accounts.sql` the same way. It's safe to run
 more than once, and its header has the one-line command that removes the sample data.
@@ -168,6 +169,26 @@ branches run a dry run that prints the report without the Supabase secrets. An i
 fewer than 1,500 companies isn't saved. Companies that leave the indexes are kept with
 `in_index = false`, so their signals and connections stay. The Accounts page shows the counts, and
 research uses the imported GICS sector and index membership.
+
+### Saved research
+
+A GitHub Actions job (`.github/workflows/research-accounts.yml`) runs the research agent every 6 hours
+on the next 10 companies where the seller has a Manager+ connection, and on demand (Actions → Research
+accounts → Run workflow, with a company count). `scripts/research-accounts.ts` runs the same agent as
+`/research/` (`worker/research.ts`), in Node:
+
+- **Queue:** companies never researched first, most connections first, then the least recently
+  attempted. Companies researched successfully in the last 7 days are skipped.
+- **Saving:** each run is recorded in `research_runs`. A run that finishes (or uses all its turns)
+  replaces the company's signals, with their quotes; one cut short by the model or a service keeps the
+  earlier signals. The ranked accounts score from these signals.
+- **Pacing:** Massive limits calls per minute by plan, so a 429 is retried after a pause and companies
+  are 20 seconds apart.
+
+It needs the repository secrets `NVIDIA_API_KEY`, `MASSIVE_API_KEY` and `SEC_USER_AGENT`, plus the
+Supabase ones to save. The model and API base URLs come from `wrangler.jsonc`. Only `main` saves;
+pushes to other branches research CL as a dry run. The repository is public, so its Actions logs are
+too: they show only public filing data, never connections.
 
 ### LinkedIn import
 
@@ -223,8 +244,8 @@ In build order:
    company, refreshed weekly by GitHub Actions.
 2. **LinkedIn import** (done): upload `Connections.csv` on the Accounts page; Manager+ connections are
    matched to the S&P 1500.
-3. **Saved research:** run the research agent for every matched company in the background
-   (Cloudflare Workflows or Queues) and save its signals, quotes and run log to Supabase.
+3. **Saved research** (done): the research agent runs on matched companies every 6 hours, 10 at a
+   time, in GitHub Actions, and saves signals and quotes to Supabase.
 4. **Daily monitor:** a scheduled job (Cloudflare Cron Triggers) checks each matched company on EDGAR
    for new 8-Ks, Form 3s, 10-Qs and 10-Ks. Only companies with something new go to the research agent,
    in an update mode that adds new signals and retires outdated ones. Scores are recalculated daily

@@ -507,6 +507,15 @@
   font-size: 13px;
   color: var(--text-2);
 }
+.evidence-quote {
+  display: block;
+  margin: 2px 0 6px;
+  padding-left: 10px;
+  border-left: 2px solid var(--border-strong);
+  font-size: 12px;
+  font-style: italic;
+  color: var(--text-2);
+}
 .evidence-meta {
   display: flex;
   flex-wrap: wrap;
