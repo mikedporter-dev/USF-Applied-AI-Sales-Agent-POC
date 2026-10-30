@@ -35,7 +35,8 @@ Defined in `src/shared/scoring.ts`, with every weight in one place:
 - **Fit (30%)**: revenue band and GICS sector.
 - **Intent (40%)**: concrete AI commitments, leadership changes, acquisitions, restructurings, AI-driven reorgs,
   and, at a lower weight (5 points each, 10 at most), generic AI mentions with nothing concrete behind them.
-- **Gap (30%)**: AI pilots with no reported results, and stated ambition with no outcomes yet.
+- **Gap (30%)**: AI pilots with no reported results (40 each, up to 80), and, when no AI results at scale are
+  reported, AI commitments (20 each, up to 40) and any AI mention (15): stated ambition with no outcomes yet.
 - **Demotion**: companies already publishing large-scale AI results get their score multiplied by 0.6.
 - **Tiers**: Tier 1 is 65 and up, Tier 2 is 45 and up. The outreach list takes Tier 1 first and fills
   with Tier 2, up to 100 accounts.

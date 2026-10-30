@@ -93,12 +93,18 @@ export function intentScore(signals: Signal[]): number {
   return clamp(total);
 }
 
-/** Gap = stated ambition without reported results. */
+/**
+ * Gap = stated ambition without reported results. Pilots with no results count
+ * most. Without AI results at scale, each AI commitment adds to the gap, and
+ * talking about AI at all adds a little: the company says AI matters but shows
+ * nothing working.
+ */
 export function gapScore(signals: Signal[]): number {
   const pilots = Math.min(count(signals, "ai_pilot_no_results") * 40, 80);
-  const ambitionWithoutResults =
-    count(signals, "ai_commitment") > 0 && count(signals, "ai_scaled_results") === 0 ? 20 : 0;
-  return clamp(pilots + ambitionWithoutResults);
+  if (count(signals, "ai_scaled_results") > 0) return clamp(pilots);
+  const commitments = Math.min(count(signals, "ai_commitment") * 20, 40);
+  const talk = count(signals, "ai_mention") > 0 ? 15 : 0;
+  return clamp(pilots + commitments + talk);
 }
 
 export function tierFor(total: number): Tier {
@@ -127,6 +133,7 @@ function reasons(signals: Signal[], fit: number, demoted: boolean): string[] {
   if (count(signals, "ai_reorg")) out.push("Reorganizing around AI");
   const pilots = count(signals, "ai_pilot_no_results");
   if (pilots) out.push(`${pilots} AI pilot${pilots > 1 ? "s" : ""} with no reported results`);
+  if (!commitments && !pilots && !demoted && count(signals, "ai_mention")) out.push("Talks about AI but reports no AI results");
   if (demoted) out.push("Demoted: already reports large-scale AI results");
   return out;
 }
