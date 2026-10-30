@@ -1,5 +1,6 @@
 import { createClient, type SupabaseClient } from "@supabase/supabase-js";
 import { approvalChange } from "../src/shared/approval";
+import type { UniverseRow, UniverseSummary } from "../src/shared/universe";
 import type {
   AccountInput,
   ApprovalRequest,
@@ -7,13 +8,14 @@ import type {
   ContactApprovalUpdate,
   EmailStatus,
   FilingForm,
+  IndexMembership,
   Seniority,
   SignalKind,
   SignalSource,
 } from "../src/shared/types";
 import type { Env } from "./env";
 
-// Row shapes for supabase/migrations/ (0001_init.sql + 0002_target_contact_approval.sql).
+// Row shapes for supabase/migrations/ (0001_init.sql through 0004_universe_import.sql).
 interface ContactRow {
   id: number;
   name: string;
@@ -31,8 +33,8 @@ interface CompanyRow {
   name: string;
   industry: string;
   index_membership: AccountInput["company"]["index"];
-  revenue_usd: number;
-  employees: number;
+  revenue_usd: number | null;
+  employees: number | null;
   signals: {
     kind: SignalKind;
     summary: string;
@@ -63,6 +65,7 @@ export async function loadAccountInputs(env: Env): Promise<AccountInput[]> {
   const { data, error } = await client(env)
     .from("companies")
     .select("*, signals(*), connections!inner(*), target_contacts(*)")
+    .eq("in_index", true)
     .returns<CompanyRow[]>();
   if (error) throw new Error(`Supabase: ${error.message}`);
 
@@ -75,8 +78,8 @@ export async function loadAccountInputs(env: Env): Promise<AccountInput[]> {
         name: row.name,
         industry: row.industry,
         index: row.index_membership,
-        revenueUsd: Number(row.revenue_usd),
-        employees: row.employees,
+        revenueUsd: Number(row.revenue_usd ?? 0),
+        employees: row.employees ?? 0,
       },
       signals: row.signals.map((s) => ({
         kind: s.kind,
@@ -143,4 +146,82 @@ export async function setApproval(env: Env, { contactIds, status }: ApprovalRequ
     emailStatus: row.email_status,
     email: row.email ?? undefined,
   }));
+}
+
+/**
+ * Save one batch of the S&P 1500 import. Each row is stamped with the import's
+ * start time, so finishUniverseImport can tell which companies dropped out.
+ */
+export async function saveUniverse(env: Env, importedAt: string, rows: UniverseRow[]): Promise<number> {
+  const { error } = await client(env)
+    .from("companies")
+    .upsert(
+      rows.map((r) => ({
+        cik: r.cik,
+        ticker: r.ticker,
+        name: r.name,
+        industry: r.gicsSector,
+        index_membership: r.index,
+        revenue_usd: r.revenueUsd ?? null,
+        revenue_fiscal_year_end: r.revenueFiscalYearEnd ?? null,
+        revenue_source: r.revenueTag ? `SEC XBRL ${r.revenueTag}` : null,
+        in_index: true,
+        indexed_at: importedAt,
+        updated_at: new Date().toISOString(),
+      })),
+      { onConflict: "cik" },
+    );
+  if (error) throw new Error(`Supabase: ${error.message}`);
+  return rows.length;
+}
+
+/** After every batch is saved: companies an earlier import saw but this one didn't have left the indexes. */
+export async function finishUniverseImport(env: Env, importedAt: string): Promise<number> {
+  const { count, error } = await client(env)
+    .from("companies")
+    .update({ in_index: false }, { count: "exact" })
+    .eq("in_index", true)
+    .lt("indexed_at", importedAt);
+  if (error) throw new Error(`Supabase: ${error.message}`);
+  return count ?? 0;
+}
+
+/** How many companies are in the universe now, by index. */
+export async function universeSummary(env: Env): Promise<UniverseSummary> {
+  const db = client(env);
+  const inUniverse = () => db.from("companies").select("cik", { count: "exact", head: true }).eq("in_index", true).not("indexed_at", "is", null);
+  const indexes: IndexMembership[] = ["S&P 500", "S&P MidCap 400", "S&P SmallCap 600"];
+  const [total, withRevenue, latest, ...byIndex] = await Promise.all([
+    inUniverse(),
+    inUniverse().not("revenue_usd", "is", null),
+    db.from("companies").select("indexed_at").not("indexed_at", "is", null).order("indexed_at", { ascending: false }).limit(1),
+    ...indexes.map((i) => inUniverse().eq("index_membership", i)),
+  ]);
+  const failed = [total, withRevenue, latest, ...byIndex].find((r) => r.error);
+  if (failed?.error) throw new Error(`Supabase: ${failed.error.message}`);
+  return {
+    total: total.count ?? 0,
+    withRevenue: withRevenue.count ?? 0,
+    byIndex: Object.fromEntries(indexes.map((i, n) => [i, byIndex[n].count ?? 0])) as Record<IndexMembership, number>,
+    importedAt: (latest.data?.[0] as { indexed_at?: string } | undefined)?.indexed_at,
+  };
+}
+
+export interface UniverseListing {
+  /** Whether the S&P 1500 has been imported at all. */
+  loaded: boolean;
+  index?: IndexMembership;
+  gicsSector?: string;
+}
+
+/** Look up one company in the imported S&P 1500, for research. */
+export async function universeListing(env: Env, cik: string): Promise<UniverseListing> {
+  const db = client(env);
+  const [row, any] = await Promise.all([
+    db.from("companies").select("industry, index_membership").eq("cik", cik.padStart(10, "0")).eq("in_index", true).not("indexed_at", "is", null).maybeSingle(),
+    db.from("companies").select("cik", { count: "exact", head: true }).not("indexed_at", "is", null),
+  ]);
+  if (row.error || any.error) throw new Error(`Supabase: ${(row.error ?? any.error)!.message}`);
+  const listed = row.data as { industry: string; index_membership: IndexMembership } | null;
+  return { loaded: (any.count ?? 0) > 0, index: listed?.index_membership, gicsSector: listed?.industry };
 }

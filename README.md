@@ -135,13 +135,33 @@ Run the files in `supabase/migrations/` in order in the Supabase SQL editor, or 
 
 1. `0001_init.sql`: tables, enums, row-level security
 2. `0002_target_contact_approval.sql`: seller approval on `target_contacts`
+3. `0003_ai_mention_signal.sql`: the `ai_mention` signal kind (run on its own, outside a transaction)
+4. `0004_universe_import.sql`: S&P 1500 import columns on `companies`
 
 To test with fictional data, run `supabase/seed/sample_accounts.sql` the same way. It's safe to run
 more than once, and its header has the one-line command that removes the sample data.
 
-Each migration runs in a single transaction. Row-level security is on with no policies, so only the
+Each migration except 0003 runs in a single transaction. Row-level security is on with no policies, so only the
 Worker's Supabase secret key can read the data. Once `SUPABASE_URL` and `SUPABASE_SECRET_KEY` are set,
 `/api/accounts` reads from Supabase instead of the sample data, and approvals are saved there.
+
+### S&P Composite 1500 import
+
+The Accounts page has an **Import S&P 1500** button (it needs Supabase and `SEC_USER_AGENT`). It loads:
+
+- **Index membership and GICS sector** from the holdings of the iShares ETFs that track each index:
+  IVV (S&P 500), IJH (MidCap 400) and IJR (SmallCap 600).
+- **CIK** from SEC's `company_tickers.json`, matching tickers across styles (BRKB, BRK-B, BRK.B).
+- **Annual revenue** from SEC XBRL frames: one file per revenue tag per calendar year covers every
+  filer, so revenue for all 1,500 companies takes six requests.
+
+The files are megabytes, more than the Worker's CPU budget allows it to parse, so the Worker only
+passes them through (`GET /api/universe/source/:name`, fixed sources only) and the browser parses and
+matches them (`src/shared/universe.ts`), then saves companies in batches (`POST /api/universe`). If
+iShares can't be fetched, the page links to the fund page so the CSV can be downloaded and uploaded.
+An import that matches far fewer than 1,500 companies isn't saved. Companies that leave the indexes are
+kept with `in_index = false`, so their signals and connections stay. Research uses the imported GICS
+sector and index membership when the company is in the list.
 
 ## Deploy
 
@@ -174,7 +194,8 @@ To deploy from your own machine instead: `npx wrangler login`, then `npm run dep
 
 In build order:
 
-1. **S&P Composite 1500 universe:** load the companies with SEC CIK, size and industry.
+1. **S&P Composite 1500 universe** (done): index membership, GICS sector, SEC CIK and revenue for each
+   company, imported from the Accounts page.
 2. **LinkedIn import:** upload the seller's `Connections.csv` export, keep Manager+ connections, and
    match them to the universe.
 3. **Saved research:** run the research agent for every matched company in the background

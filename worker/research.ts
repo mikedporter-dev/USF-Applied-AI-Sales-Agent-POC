@@ -17,6 +17,7 @@ import { sicToGicsSector } from "../src/shared/sic";
 import * as edgar from "./edgar";
 import type { Env } from "./env";
 import * as massive from "./massive";
+import * as supabase from "./supabase";
 import { type AgentMessage, chatWithTools, type ToolDefinition } from "./nvidia";
 
 // The account research agent. The model decides which filings to read and what
@@ -199,7 +200,8 @@ export async function runResearch(env: Env, ticker: string, emit: Emit, now = ne
   /** 10-K risk-factor text read this run: boilerplate there doesn't count as an AI mention. */
   const riskFactors: Corpus = new Map();
   const signals: RecordedSignal[] = [];
-  const facts = await companyFacts(env, profile, withEdgar);
+  const listing = supabase.isConfigured(env) ? await supabase.universeListing(env, profile.cik).catch(() => undefined) : undefined;
+  const facts = await companyFacts(env, profile, withEdgar, listing);
   await emit({ type: "status", message: describeFacts(facts) });
   let summary: string | undefined;
   let edgarReads = 0;
@@ -251,11 +253,12 @@ export async function runResearch(env: Env, ticker: string, emit: Emit, now = ne
   /** Filing date and form of an EDGAR document, from the filing folder it sits in. */
   async function edgarDocFacts(url: string) {
     const filings = await edgarFilings().catch(() => []);
-    const filing = filings.find((f) => url.startsWith(`${f.folderUrl}/`));
+    // A document sits in its filing's folder, or is the whole filing as <accession>.txt.
+    const filing = filings.find((f) => url.startsWith(`${f.folderUrl}/`) || url.endsWith(`/${f.accession}.txt`));
     const name = url.split("/").pop() ?? "";
     let form: FilingForm | undefined;
     if (filing?.form === "10-Q") form = "10-Q";
-    else if (filing?.form === "8-K") form = name === filing.primaryDocument ? "8-K" : /ex-?99/i.test(name) ? "8-K EX-99" : undefined;
+    else if (filing?.form === "8-K") form = name === filing.primaryDocument || name === `${filing.accession}.txt` ? "8-K" : /ex-?99/i.test(name) ? "8-K EX-99" : undefined;
     return { source: "edgar" as const, filedAt: filing?.filingDate, form };
   }
 
@@ -547,7 +550,7 @@ Already known: ${describeFacts(facts)}; industry "${profile.sicDescription ?? "u
         ticker: profile.ticker,
         name: profile.name,
         industry: facts?.gicsSector ?? "Unknown",
-        index: "S&P 500",
+        index: facts?.index ?? "S&P 500", // index doesn't affect the score
         revenueUsd: facts?.revenueUsd ?? 0,
         employees: profile.employees ?? 0,
       },
@@ -583,10 +586,18 @@ Already known: ${describeFacts(facts)}; industry "${profile.sicDescription ?? "u
 }
 
 /** Sector from the SIC code and revenue from SEC XBRL: facts, so code fills them in rather than the agent. */
-async function companyFacts(env: Env, profile: massive.CompanyProfile, withEdgar: boolean): Promise<CompanyFacts> {
-  const facts: CompanyFacts = {};
+async function companyFacts(
+  env: Env,
+  profile: massive.CompanyProfile,
+  withEdgar: boolean,
+  listing?: supabase.UniverseListing,
+): Promise<CompanyFacts> {
+  const facts: CompanyFacts = { index: listing?.index, universeLoaded: listing?.loaded };
   const sector = sicToGicsSector(profile.sicCode);
-  if (sector) {
+  if (listing?.gicsSector) {
+    facts.gicsSector = listing.gicsSector;
+    facts.sectorSource = `GICS sector from the ${listing.index} holdings`;
+  } else if (sector) {
     facts.gicsSector = sector;
     facts.sectorSource = `Mapped from SIC ${profile.sicCode}${profile.sicDescription ? ` (${profile.sicDescription.toLowerCase()})` : ""}`;
   }
@@ -605,7 +616,7 @@ async function companyFacts(env: Env, profile: massive.CompanyProfile, withEdgar
 }
 
 function describeFacts(facts: CompanyFacts): string {
-  const sector = facts.gicsSector ? `${facts.gicsSector} (from SIC code)` : "sector unknown";
+  const sector = facts.gicsSector ? `${facts.gicsSector} (${facts.index ? `GICS, ${facts.index}` : "from SIC code"})` : "sector unknown";
   const revenue = facts.revenueUsd ? `revenue $${(facts.revenueUsd / 1e9).toFixed(1)}B (SEC XBRL)` : "revenue not found";
   return `${sector} · ${revenue}`;
 }
