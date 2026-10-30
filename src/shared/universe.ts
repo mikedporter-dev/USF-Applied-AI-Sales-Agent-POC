@@ -7,32 +7,15 @@ import type { IndexMembership } from "./types";
 // them weekly in GitHub Actions and saves the result to Supabase.
 
 /**
- * The three indexes, the iShares ETF that tracks each (its holdings are the
- * authoritative list), and the Wikipedia page that lists the same companies,
- * used when iShares won't serve the file.
+ * The three indexes and the Wikipedia page listing each one's companies with
+ * GICS sector. (iShares fund holdings would be the authoritative list, but
+ * iShares returned a web page instead of the file to both Cloudflare and GitHub
+ * Actions.) `min` guards against a page that was vandalized or restructured.
  */
-export const INDEX_SOURCES: { index: IndexMembership; etf: "IVV" | "IJH" | "IJR"; page: string; wikipedia: string; min: number }[] = [
-  {
-    index: "S&P 500",
-    etf: "IVV",
-    page: "https://www.ishares.com/us/products/239726/ishares-core-sp-500-etf",
-    wikipedia: "List_of_S&P_500_companies",
-    min: 450,
-  },
-  {
-    index: "S&P MidCap 400",
-    etf: "IJH",
-    page: "https://www.ishares.com/us/products/239763/ishares-core-sp-midcap-etf",
-    wikipedia: "List_of_S&P_400_companies",
-    min: 350,
-  },
-  {
-    index: "S&P SmallCap 600",
-    etf: "IJR",
-    page: "https://www.ishares.com/us/products/239774/ishares-core-sp-smallcap-etf",
-    wikipedia: "List_of_S&P_600_companies",
-    min: 500,
-  },
+export const INDEX_SOURCES: { index: IndexMembership; wikipedia: string; min: number }[] = [
+  { index: "S&P 500", wikipedia: "List_of_S&P_500_companies", min: 450 },
+  { index: "S&P MidCap 400", wikipedia: "List_of_S&P_400_companies", min: 350 },
+  { index: "S&P SmallCap 600", wikipedia: "List_of_S&P_600_companies", min: 500 },
 ];
 
 /** Don't save an import that matched far fewer companies than the 1,500 expected. */
@@ -46,73 +29,10 @@ export const REVENUE_TAGS = [
 ] as const;
 export const REVENUE_YEARS = (asOf: Date) => [asOf.getUTCFullYear() - 1, asOf.getUTCFullYear() - 2];
 
-/** iShares sector names that differ from GICS. */
-const SECTOR_NAMES: Record<string, string> = { Communication: "Communication Services" };
-
 export interface Holding {
   ticker: string;
   name: string;
   sector: string;
-}
-
-export interface Holdings {
-  /** Date of the holdings file, YYYY-MM-DD, when it says. */
-  asOf?: string;
-  holdings: Holding[];
-}
-
-/** Split one CSV line, honoring quotes ("1,234.5" stays one field). */
-function csvFields(line: string): string[] {
-  const fields: string[] = [];
-  let field = "";
-  let quoted = false;
-  for (let i = 0; i < line.length; i++) {
-    const c = line[i];
-    if (quoted) {
-      if (c === '"' && line[i + 1] === '"') {
-        field += '"';
-        i++;
-      } else if (c === '"') quoted = false;
-      else field += c;
-    } else if (c === '"') quoted = true;
-    else if (c === ",") {
-      fields.push(field);
-      field = "";
-    } else field += c;
-  }
-  fields.push(field);
-  return fields.map((f) => f.trim());
-}
-
-/**
- * Parse an iShares holdings CSV: a few summary lines ("Fund Holdings as of"),
- * a header row starting "Ticker,Name,Sector,Asset Class", one row per holding,
- * then a disclaimer. Only equities are kept; cash and futures are dropped.
- */
-export function parseHoldingsCsv(text: string): Holdings {
-  const lines = text.replace(/^﻿/, "").split(/\r?\n/);
-  const asOfLine = lines.find((l) => /^"?Fund Holdings as of/i.test(l));
-  const asOfText = asOfLine ? csvFields(asOfLine)[1] : undefined;
-  const asOfDate = asOfText ? new Date(`${asOfText} UTC`) : undefined;
-  const asOf = asOfDate && !Number.isNaN(asOfDate.getTime()) ? asOfDate.toISOString().slice(0, 10) : undefined;
-
-  const headerAt = lines.findIndex((l) => /^"?Ticker"?,/i.test(l));
-  if (headerAt === -1) throw new Error("This doesn't look like an iShares holdings file: no Ticker,Name,Sector header row.");
-  const header = csvFields(lines[headerAt]).map((h) => h.toLowerCase());
-  const col = (name: string) => header.indexOf(name);
-  const [ticker, name, sector, assetClass] = [col("ticker"), col("name"), col("sector"), col("asset class")];
-  if (ticker < 0 || name < 0 || sector < 0) throw new Error("The holdings file is missing the Ticker, Name or Sector column.");
-
-  const holdings: Holding[] = [];
-  for (const line of lines.slice(headerAt + 1)) {
-    if (!line.trim()) break; // the disclaimer follows a blank line
-    const f = csvFields(line);
-    if (assetClass >= 0 && f[assetClass] !== "Equity") continue;
-    const t = f[ticker]?.toUpperCase();
-    if (!t || t === "-") continue;
-    holdings.push({ ticker: t, name: f[name], sector: SECTOR_NAMES[f[sector]] ?? f[sector] });
-  }
-  return { asOf, holdings };
 }
 
 /** Text of each cell in an HTML table row. */
@@ -141,14 +61,14 @@ export function parseWikipediaConstituents(html: string): Holding[] {
       const c = cells(row, "t[dh]");
       const ticker = c[symbol]?.toUpperCase();
       if (!ticker || !/^[A-Z0-9.\-]{1,10}$/.test(ticker)) continue;
-      holdings.push({ ticker, name: c[name >= 0 ? name : symbol + 1] ?? ticker, sector: SECTOR_NAMES[c[sector]] ?? c[sector] });
+      holdings.push({ ticker, name: c[name >= 0 ? name : symbol + 1] ?? ticker, sector: c[sector] });
     }
     return holdings;
   }
   throw new Error("No table with Symbol and GICS Sector columns on the Wikipedia page.");
 }
 
-/** Compare tickers across sources: iShares writes BRKB, SEC BRK-B, others BRK.B. */
+/** Compare tickers across sources: Wikipedia writes BRK.B, SEC BRK-B. */
 export const tickerKey = (ticker: string) => ticker.toUpperCase().replace(/[^A-Z0-9]/g, "");
 
 export interface SecTicker {

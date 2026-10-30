@@ -1,7 +1,8 @@
 // Weekly S&P Composite 1500 import, run by .github/workflows/import-universe.yml.
 //
-// Loads every company in the S&P 500, MidCap 400 and SmallCap 600 with its GICS
-// sector, SEC CIK and latest annual revenue, and saves them to Supabase.
+// Loads every company in the S&P 500, MidCap 400 and SmallCap 600 (from
+// Wikipedia's constituent lists) with its GICS sector, SEC CIK and latest annual
+// revenue (from SEC), and saves them to Supabase.
 // Companies that leave the indexes are kept, marked in_index = false.
 //
 // Env: SEC_USER_AGENT (required), SUPABASE_URL and SUPABASE_SECRET_KEY (to save).
@@ -16,7 +17,6 @@ import {
   type Holding,
   INDEX_SOURCES,
   MIN_COMPANIES,
-  parseHoldingsCsv,
   parseSecTickers,
   parseWikipediaConstituents,
   REVENUE_TAGS,
@@ -28,7 +28,7 @@ import type { IndexMembership } from "../src/shared/types";
 
 const { SEC_USER_AGENT, SUPABASE_URL, SUPABASE_SECRET_KEY } = process.env;
 const DRY_RUN = process.env.DRY_RUN === "true" || !SUPABASE_URL || !SUPABASE_SECRET_KEY;
-/** Identifies the app to iShares and Wikipedia (Wikimedia asks API clients to). */
+/** Wikimedia asks API clients to say who they are. */
 const APP_AGENT = "Inroad-POC/0.1 (https://github.com/mikedporter-dev/USF-Applied-AI-Sales-Agent-POC)";
 
 async function get(url: string, userAgent: string): Promise<Response> {
@@ -37,27 +37,14 @@ async function get(url: string, userAgent: string): Promise<Response> {
   return res;
 }
 
-/** The index's holdings from iShares, or from Wikipedia if iShares won't serve the file. */
-async function holdingsFor(source: (typeof INDEX_SOURCES)[number]): Promise<{ holdings: Holding[]; from: string }> {
-  const ishares = `${source.page}/1467271812596.ajax?fileType=csv&fileName=${source.etf}_holdings&dataType=fund`;
-  try {
-    const text = await (await get(ishares, APP_AGENT)).text();
-    try {
-      const { asOf, holdings } = parseHoldingsCsv(text);
-      if (holdings.length < source.min) throw new Error(`only ${holdings.length} holdings`);
-      return { holdings, from: `iShares ${source.etf}${asOf ? ` as of ${asOf}` : ""}` };
-    } catch (err) {
-      throw new Error(`${(err as Error).message} Got: ${JSON.stringify(text.slice(0, 120))}`);
-    }
-  } catch (err) {
-    console.log(`  iShares ${source.etf} unavailable: ${(err as Error).message}`);
-  }
+/** The index's companies from its Wikipedia list, and the page revision they came from. */
+async function companiesIn(source: (typeof INDEX_SOURCES)[number]): Promise<{ holdings: Holding[]; revision: number }> {
   const page = encodeURIComponent(source.wikipedia);
-  const api = `https://en.wikipedia.org/w/api.php?action=parse&page=${page}&prop=text&format=json&formatversion=2&redirects=1`;
+  const api = `https://en.wikipedia.org/w/api.php?action=parse&page=${page}&prop=text|revid&format=json&formatversion=2&redirects=1`;
   const { parse } = (await (await get(api, APP_AGENT)).json()) as { parse?: { text?: string; revid?: number } };
   const holdings = parseWikipediaConstituents(parse?.text ?? "");
   if (holdings.length < source.min) throw new Error(`${source.index}: only ${holdings.length} companies on Wikipedia`);
-  return { holdings, from: `Wikipedia ${source.wikipedia} (revision ${parse?.revid ?? "?"})` };
+  return { holdings, revision: parse?.revid ?? 0 };
 }
 
 async function main() {
@@ -66,8 +53,8 @@ async function main() {
 
   const holdings: { index: IndexMembership; holdings: Holding[] }[] = [];
   for (const source of INDEX_SOURCES) {
-    const { holdings: list, from } = await holdingsFor(source);
-    console.log(`${source.index}: ${list.length} companies from ${from}`);
+    const { holdings: list, revision } = await companiesIn(source);
+    console.log(`${source.index}: ${list.length} listings from Wikipedia ${source.wikipedia} (revision ${revision})`);
     holdings.push({ index: source.index, holdings: list });
   }
 

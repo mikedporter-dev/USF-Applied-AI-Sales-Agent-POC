@@ -151,9 +151,11 @@ A GitHub Actions job (`.github/workflows/import-universe.yml`) runs `scripts/imp
 Monday and on demand (Actions → Import S&P 1500 → Run workflow). It loads every company in the three
 indexes into `companies`:
 
-- **Index membership and GICS sector** from the holdings of the iShares ETFs that track each index
-  (IVV, IJH, IJR), or from Wikipedia's constituent lists when iShares won't serve the file.
-- **CIK** from SEC's `company_tickers.json`, matching tickers across styles (BRKB, BRK-B, BRK.B).
+- **Index membership and GICS sector** from Wikipedia's constituent lists (List of S&P 500, 400 and 600
+  companies), which are kept current as S&P rebalances. iShares fund holdings would be the authoritative
+  source, but iShares returns a web page instead of the file to both Cloudflare and GitHub Actions.
+- **CIK** from SEC's `company_tickers.json`, matching ticker styles (BRK.B, BRK-B). A company with two
+  share classes (GOOGL, GOOG) is one row.
 - **Annual revenue** from SEC XBRL frames: one file per revenue tag per calendar year covers every
   filer, so revenue for all 1,500 companies takes six requests.
 

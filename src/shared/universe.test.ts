@@ -1,28 +1,16 @@
 import { describe, expect, it } from "vitest";
-import { addRevenueFrame, buildUniverse, companyRecord, parseHoldingsCsv, parseSecTickers, parseWikipediaConstituents, type Revenue } from "./universe";
+import { addRevenueFrame, buildUniverse, companyRecord, parseSecTickers, parseWikipediaConstituents, type Revenue } from "./universe";
 
-// The layout of an iShares holdings download: summary lines, a header row,
-// quoted holdings (numbers with thousands separators), then a disclaimer.
-const IVV = `iShares Core S&P 500 ETF
-Fund Holdings as of,"Oct 28, 2026"
-Inception Date,"May 15, 2000"
-Shares Outstanding,"1,040,000,000.00"
-Stock,"-"
-Bond,"-"
-Cash,"-"
-Other,"-"
-
-Ticker,Name,Sector,Asset Class,Market Value,Weight (%),Notional Value,Quantity,Price,Location,Exchange,Currency,FX Rate,Market Currency,Accrual Date
-"AAPL","APPLE INC","Information Technology","Equity","45,123,456,789.00","6.81","45,123,456,789.00","180,000,000.00","250.10","United States","NASDAQ","USD","1.00","USD","-"
-"GOOGL","ALPHABET INC CLASS A","Communication","Equity","20,000,000.00","2.10","20,000,000.00","100,000.00","200.00","United States","NASDAQ","USD","1.00","USD","-"
-"GOOG","ALPHABET INC CLASS C","Communication","Equity","17,000,000.00","1.70","17,000,000.00","85,000.00","200.00","United States","NASDAQ","USD","1.00","USD","-"
-"BRKB","BERKSHIRE HATHAWAY INC CLASS B","Financials","Equity","10,000,000.00","1.60","10,000,000.00","20,000.00","500.00","United States","New York Stock Exchange Inc.","USD","1.00","USD","-"
-"CL","COLGATE-PALMOLIVE","Consumer Staples","Equity","3,000,000.00","0.15","3,000,000.00","40,000.00","75.00","United States","New York Stock Exchange Inc.","USD","1.00","USD","-"
-"ZZZZ","DELISTED HOLDING","Industrials","Equity","1,000.00","0.00","1,000.00","10.00","100.00","United States","-","USD","1.00","USD","-"
-"USD","USD CASH","Cash and/or Derivatives","Cash","500,000.00","0.05","500,000.00","500,000.00","100.00","United States","-","USD","1.00","USD","-"
-"ESZ6","S&P500 EMINI DEC 26","Cash and/or Derivatives","Futures","0.00","0.00","9,000,000.00","30.00","6,000.00","United States","Chicago Mercantile Exchange","USD","1.00","USD","-"
-
-"The content contained herein is owned or licensed by BlackRock and/or its third-party information providers."`;
+// Companies as the Wikipedia lists give them: two share classes of one company,
+// a ticker with a class suffix, and one with no SEC match.
+const SP500 = [
+  { ticker: "AAPL", name: "Apple Inc.", sector: "Information Technology" },
+  { ticker: "GOOGL", name: "Alphabet Inc. (Class A)", sector: "Communication Services" },
+  { ticker: "GOOG", name: "Alphabet Inc. (Class C)", sector: "Communication Services" },
+  { ticker: "BRK.B", name: "Berkshire Hathaway", sector: "Financials" },
+  { ticker: "CL", name: "Colgate-Palmolive", sector: "Consumer Staples" },
+  { ticker: "ZZZZ", name: "Delisted Co", sector: "Industrials" },
+];
 
 const SEC_TICKERS = {
   0: { cik_str: 320193, ticker: "AAPL", title: "Apple Inc." },
@@ -32,26 +20,13 @@ const SEC_TICKERS = {
   4: { cik_str: 21665, ticker: "CL", title: "COLGATE PALMOLIVE CO" },
 };
 
-describe("parseHoldingsCsv", () => {
-  it("reads the as-of date and equity holdings, mapping sector names to GICS", () => {
-    const { asOf, holdings } = parseHoldingsCsv(IVV);
-    expect(asOf).toBe("2026-10-28");
-    expect(holdings.map((h) => h.ticker)).toEqual(["AAPL", "GOOGL", "GOOG", "BRKB", "CL", "ZZZZ"]); // no cash or futures
-    expect(holdings[1]).toEqual({ ticker: "GOOGL", name: "ALPHABET INC CLASS A", sector: "Communication Services" });
-  });
-
-  it("explains a file that isn't an iShares holdings download", () => {
-    expect(() => parseHoldingsCsv("<html>Access denied</html>")).toThrow(/iShares holdings file/);
-  });
-});
-
 describe("buildUniverse", () => {
   it("matches holdings to CIKs across ticker styles, one row per company, with revenue", () => {
     const revenue = new Map<string, Revenue>();
     addRevenueFrame(revenue, { data: [{ cik: 21665, end: "2024-12-31", val: 20101e6 }] }, "Revenues");
     addRevenueFrame(revenue, { data: [{ cik: 21665, end: "2025-12-31", val: 20382e6 }, { cik: 320193, end: "2025-09-27", val: 416e9 }] }, "RevenueFromContractWithCustomerExcludingAssessedTax");
 
-    const { rows, unmatched } = buildUniverse([{ index: "S&P 500", ...parseHoldingsCsv(IVV) }], parseSecTickers(SEC_TICKERS), revenue);
+    const { rows, unmatched } = buildUniverse([{ index: "S&P 500", holdings: SP500 }], parseSecTickers(SEC_TICKERS), revenue);
 
     expect(rows.map((r) => r.ticker)).toEqual(["AAPL", "GOOGL", "BRK-B", "CL"]);
     expect(rows.find((r) => r.ticker === "CL")).toEqual({
@@ -65,7 +40,7 @@ describe("buildUniverse", () => {
       revenueTag: "RevenueFromContractWithCustomerExcludingAssessedTax",
     });
     expect(rows.find((r) => r.ticker === "BRK-B")?.revenueUsd).toBeUndefined();
-    expect(unmatched).toEqual([{ ticker: "ZZZZ", name: "DELISTED HOLDING", sector: "Industrials", index: "S&P 500" }]);
+    expect(unmatched).toEqual([{ ticker: "ZZZZ", name: "Delisted Co", sector: "Industrials", index: "S&P 500" }]);
   });
 });
 
