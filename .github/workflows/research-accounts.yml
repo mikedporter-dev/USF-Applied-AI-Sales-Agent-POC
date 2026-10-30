@@ -1,0 +1,49 @@
+name: Research accounts
+
+# Runs the research agent on the next companies where the seller has a Manager+
+# connection and saves their signals to Supabase: every 6 hours, and on demand
+# from the Actions tab. Only main saves; other branches do a dry run on CL,
+# without the Supabase secrets.
+
+on:
+  schedule:
+    - cron: "23 1,7,13,19 * * *" # every 6 hours
+  workflow_dispatch:
+    inputs:
+      limit:
+        description: Companies to research this run
+        default: "10"
+  push:
+    branches-ignore: [main]
+    paths:
+      - scripts/research-accounts.ts
+      - .github/workflows/research-accounts.yml
+
+permissions:
+  contents: read
+
+concurrency:
+  group: research-accounts-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  research:
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v5
+        with:
+          node-version-file: .node-version
+          cache: npm
+      - run: npm ci
+      - name: Research
+        run: npx tsx scripts/research-accounts.ts
+        env:
+          DRY_RUN: ${{ github.ref != 'refs/heads/main' }}
+          RESEARCH_LIMIT: ${{ inputs.limit || '10' }}
+          NVIDIA_API_KEY: ${{ secrets.NVIDIA_API_KEY }}
+          MASSIVE_API_KEY: ${{ secrets.MASSIVE_API_KEY }}
+          SEC_USER_AGENT: ${{ secrets.SEC_USER_AGENT }}
+          SUPABASE_URL: ${{ github.ref == 'refs/heads/main' && secrets.SUPABASE_URL || '' }}
+          SUPABASE_SECRET_KEY: ${{ github.ref == 'refs/heads/main' && secrets.SUPABASE_SECRET_KEY || '' }}

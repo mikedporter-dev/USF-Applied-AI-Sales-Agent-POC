@@ -40,6 +40,8 @@ export interface Signal {
   filedAt: string;
   source: SignalSource;
   url?: string;
+  /** The filing text the signal rests on, when saved research recorded it. */
+  quote?: string;
 }
 
 export type Seniority = "Manager" | "Director" | "VP" | "C-Suite" | "Owner/Partner";
@@ -77,6 +79,8 @@ export interface AccountInput {
   signals: Signal[];
   connections: Connection[];
   targetContact?: TargetContact;
+  /** When saved research last ran for this company (ISO), if it has. */
+  researchedAt?: string;
 }
 
 export type Tier = 1 | 2 | 3;

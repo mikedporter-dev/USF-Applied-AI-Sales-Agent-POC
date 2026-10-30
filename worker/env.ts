@@ -1,5 +1,6 @@
 export interface Env {
-  ASSETS: Fetcher;
+  /** Static assets. Typed by shape, so scripts can run the agent outside Workers. */
+  ASSETS: { fetch(request: Request): Promise<Response> };
   NVIDIA_BASE_URL: string;
   NVIDIA_MODEL: string;
   MASSIVE_BASE_URL: string;

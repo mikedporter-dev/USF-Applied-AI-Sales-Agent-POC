@@ -1,6 +1,7 @@
 import { createClient, type SupabaseClient } from "@supabase/supabase-js";
 import { approvalChange } from "../src/shared/approval";
 import type { MatchedConnection, UniverseCompany } from "../src/shared/connections";
+import type { RecordedSignal, ResearchResult } from "../src/shared/research";
 import type { UniverseSummary } from "../src/shared/universe";
 import type {
   AccountInput,
@@ -44,7 +45,9 @@ interface CompanyRow {
     filed_at: string;
     source: SignalSource;
     url: string | null;
+    quote: string | null;
   }[];
+  research_runs: { finished_at: string; stop_reason: string }[];
   connections: { name: string; title: string; seniority: Seniority; connected_on: string | null }[];
   target_contacts: ContactRow[];
 }
@@ -65,7 +68,7 @@ function client(env: Env): SupabaseClient {
 export async function loadAccountInputs(env: Env): Promise<AccountInput[]> {
   const { data, error } = await client(env)
     .from("companies")
-    .select("*, signals(*), connections!inner(*), target_contacts(*)")
+    .select("*, signals(*), research_runs(finished_at, stop_reason), connections!inner(*), target_contacts(*)")
     .eq("in_index", true)
     .returns<CompanyRow[]>();
   if (error) throw new Error(`Supabase: ${error.message}`);
@@ -90,7 +93,13 @@ export async function loadAccountInputs(env: Env): Promise<AccountInput[]> {
         filedAt: s.filed_at,
         source: s.source,
         url: s.url ?? undefined,
+        quote: s.quote ?? undefined,
       })),
+      researchedAt: row.research_runs
+        .filter((r) => r.stop_reason === "finished" || r.stop_reason === "step_limit")
+        .map((r) => r.finished_at)
+        .sort()
+        .at(-1),
       connections: row.connections.map((c) => ({
         name: c.name,
         title: c.title,
@@ -235,4 +244,141 @@ export async function finishConnectionsImport(env: Env, importedAt: string): Pro
     .or(`imported_at.is.null,imported_at.lt."${importedAt}"`);
   if (error) throw new Error(`Supabase: ${error.message}`);
   return count ?? 0;
+}
+
+/** A company that saved research checks for changed signals no more often than this. */
+export const REFRESH_DAYS = 7;
+
+export interface QueuedCompany {
+  cik: string;
+  ticker: string;
+  name: string;
+  connections: number;
+}
+
+/** Every row of a query, past Supabase's 1,000-row limit. */
+async function allRows<T>(page: (from: number, to: number) => PromiseLike<{ data: T[] | null; error: { message: string } | null }>): Promise<T[]> {
+  const out: T[] = [];
+  for (let from = 0; ; from += 1000) {
+    const { data, error } = await page(from, from + 999);
+    if (error) throw new Error(`Supabase: ${error.message}`);
+    out.push(...(data ?? []));
+    if ((data ?? []).length < 1000) return out;
+  }
+}
+
+/**
+ * Order the queue: companies never attempted first (most connections first),
+ * then the least recently attempted; skip those researched successfully in the
+ * last REFRESH_DAYS. Returns CIKs.
+ */
+export function pickResearchQueue(
+  connectionCount: Map<string, number>,
+  runs: { cik: string; finished_at: string; stop_reason: string }[],
+  limit: number,
+  now: Date,
+): string[] {
+  const lastAttempt = new Map<string, string>();
+  const lastSuccess = new Map<string, string>();
+  for (const r of runs) {
+    if ((lastAttempt.get(r.cik) ?? "") < r.finished_at) lastAttempt.set(r.cik, r.finished_at);
+    const ok = r.stop_reason === "finished" || r.stop_reason === "step_limit";
+    if (ok && (lastSuccess.get(r.cik) ?? "") < r.finished_at) lastSuccess.set(r.cik, r.finished_at);
+  }
+  const fresh = new Date(now.getTime() - REFRESH_DAYS * 86_400_000).toISOString();
+  return [...connectionCount.keys()]
+    .filter((cik) => (lastSuccess.get(cik) ?? "") < fresh)
+    .sort((a, b) => (lastAttempt.get(a) ?? "").localeCompare(lastAttempt.get(b) ?? "") || connectionCount.get(b)! - connectionCount.get(a)!)
+    .slice(0, limit);
+}
+
+/**
+ * The next companies to research: those with a Manager+ connection, never
+ * attempted first (most connections first), then the least recently attempted.
+ * Companies researched successfully in the last REFRESH_DAYS are skipped.
+ */
+export async function researchQueue(env: Env, limit: number, now = new Date()): Promise<QueuedCompany[]> {
+  const db = client(env);
+  const [connections, runs] = await Promise.all([
+    allRows<{ cik: string }>((from, to) => db.from("connections").select("cik").range(from, to)),
+    allRows<{ cik: string; finished_at: string; stop_reason: string }>((from, to) =>
+      db.from("research_runs").select("cik, finished_at, stop_reason").range(from, to),
+    ),
+  ]);
+  const count = new Map<string, number>();
+  for (const c of connections) count.set(c.cik, (count.get(c.cik) ?? 0) + 1);
+  const ciks = pickResearchQueue(count, runs, limit, now);
+  if (ciks.length === 0) return [];
+
+  const { data, error } = await db
+    .from("companies")
+    .select("cik, ticker, name")
+    .in("cik", ciks)
+    .eq("in_index", true)
+    .returns<{ cik: string; ticker: string; name: string }[]>();
+  if (error) throw new Error(`Supabase: ${error.message}`);
+  const byCik = new Map(data.map((c) => [c.cik, c]));
+  return ciks.flatMap((cik) => {
+    const c = byCik.get(cik);
+    return c ? [{ ...c, connections: count.get(cik)! }] : [];
+  });
+}
+
+export interface ResearchRunRecord {
+  cik: string;
+  startedAt: string;
+  model: string;
+  result?: ResearchResult;
+  error?: string;
+}
+
+/**
+ * Record a research run. A run that finished (or used all its turns) replaces
+ * the company's signals; one the model or a service cut short keeps the old ones.
+ */
+export async function saveResearchRun(env: Env, run: ResearchRunRecord): Promise<{ replacedSignals: boolean }> {
+  const db = client(env);
+  const stopReason = run.result?.stopReason ?? "error";
+  const signals: RecordedSignal[] = run.result?.signals ?? [];
+  const { data, error } = await db
+    .from("research_runs")
+    .insert({
+      cik: run.cik,
+      started_at: run.startedAt,
+      stop_reason: stopReason,
+      summary: run.result?.summary || null,
+      signal_count: signals.length,
+      model: run.model,
+      error: run.error?.slice(0, 1000) ?? null,
+    })
+    .select("id")
+    .single<{ id: number }>();
+  if (error) throw new Error(`Supabase: ${error.message}`);
+  if (stopReason !== "finished" && stopReason !== "step_limit") return { replacedSignals: false };
+
+  // Add the new signals, then drop the company's older ones.
+  if (signals.length) {
+    const { error: insertError } = await db.from("signals").insert(
+      signals.map((s) => ({
+        cik: run.cik,
+        kind: s.kind,
+        summary: s.summary,
+        form: s.form,
+        section: s.section ?? null,
+        filed_at: s.filedAt,
+        source: s.source,
+        url: s.url ?? null,
+        quote: s.quote,
+        research_run_id: data.id,
+      })),
+    );
+    if (insertError) throw new Error(`Supabase: ${insertError.message}`);
+  }
+  const { error: deleteError } = await db
+    .from("signals")
+    .delete()
+    .eq("cik", run.cik)
+    .or(`research_run_id.is.null,research_run_id.neq.${data.id}`);
+  if (deleteError) throw new Error(`Supabase: ${deleteError.message}`);
+  return { replacedSignals: true };
 }

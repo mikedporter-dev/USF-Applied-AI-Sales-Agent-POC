@@ -79,6 +79,7 @@ export function App() {
   );
   const selected = accounts.find((a) => a.company.cik === selectedCik);
   const tierCount = (t: Tier) => accounts.filter((a) => a.tier === t).length;
+  const researchedCount = accounts.filter((a) => a.researchedAt).length;
   const contacts = accounts.flatMap((a) => (a.targetContact ? [a.targetContact] : []));
   const approvalCount = (s: ApprovalStatus) => contacts.filter((c) => c.approvalStatus === s).length;
   const selectedContactIds = accounts.flatMap((a) =>
@@ -193,7 +194,16 @@ export function App() {
               note={accounts.length ? `${accounts.length} companies with a Manager+ connection` : "Import LinkedIn connections"}
               state={accounts.length ? "done" : "active"}
             />
-            <PipelineStep n={2} title="Read filings" note="Massive + EDGAR not connected" state="pending" />
+            <PipelineStep
+              n={2}
+              title="Read filings"
+              note={
+                accounts.length
+                  ? `${researchedCount} of ${accounts.length} researched · 10 every 6 hours`
+                  : "Research runs once your network is matched"
+              }
+              state={accounts.length && researchedCount === accounts.length ? "done" : accounts.length ? "active" : "pending"}
+            />
             <PipelineStep n={3} title="Score & rank" note={`${accounts.length} accounts ranked`} state="done" />
             <PipelineStep n={4} title="Find contacts" note="Apollo: coming in a future update" state="pending" />
             <PipelineStep
@@ -286,6 +296,7 @@ export function App() {
           {selected ? (
             <AccountDetail
               account={selected}
+              source={data?.source}
               brief={briefs[selected.company.cik]}
               saving={saving}
               onDecide={(status) => selected.targetContact && decide([selected.targetContact.id], status)}
@@ -425,6 +436,8 @@ function AccountRow(props: {
 
 function AccountDetail(props: {
   account: ScoredAccount;
+  /** Live accounts say whether saved research has reached them; sample data doesn't. */
+  source: AccountsResponse["source"] | undefined;
   brief: BriefState | undefined;
   saving: boolean;
   onDecide: (status: ApprovalStatus) => void;
@@ -535,11 +548,17 @@ function AccountDetail(props: {
       </DetailBlock>
 
       <DetailBlock title={`Evidence · ${signals.length} signal${signals.length === 1 ? "" : "s"}`}>
+        {props.source === "supabase" ? (
+          <p className="muted">
+            {a.researchedAt ? `Researched ${formatDate(a.researchedAt)}.` : "Not researched yet. Saved research reaches it in the next few runs."}
+          </p>
+        ) : null}
         <ol className="evidence">
           {signals.map((s, i) => (
             <li key={i}>
               <span className="evidence-kind">{signalLabel(s)}</span>
               <p>{s.summary}</p>
+              {s.quote && <q className="evidence-quote">{s.quote}</q>}
               <span className="evidence-meta">
                 <span className="chip">
                   {s.form}
