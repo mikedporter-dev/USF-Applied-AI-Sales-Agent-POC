@@ -48,6 +48,8 @@ export function normalizeText(text: string): string {
     .replace(/[‘’“”"]/g, "'") // filings and models mix single and double quotes freely
     .replace(/[–—]/g, "-")
     .replace(/\s+/g, " ")
+    .replace(/\(\s/g, "(") // text from HTML can gain a space inside parentheses
+    .replace(/\s\)/g, ")")
     .trim();
 }
 
@@ -139,7 +141,21 @@ const CHANGE_WORDS =
 /** Roles whose arrival or departure can start or reshape AI work. */
 const TOP_ROLE = /\b(chief executive|chief financial|chief operating|president|ceo|cfo|coo)\b/;
 const TECH_LEADER = /\b(chief|head)\b.*\b(information|technology|digital|data|analytics|ai|artificial intelligence|transformation|innovation)\b|\b(cio|cto|cdo|caio)\b/;
-const NOT_COUNTED = /\b(director|board|vice president|vice chair|legal|counsel|secretary|human resources|people|accounting|controller|treasurer|compliance)\b/;
+const NOT_COUNTED = /\b(director|board|vice chair|legal|counsel|secretary|human resources|people|accounting|controller|treasurer|compliance)\b/;
+/** "Executive Vice President and Chief Financial Officer" is a CFO; "Vice President, Finance" is no role that counts. */
+const VICE_PRESIDENT = /\b((senior|executive|group|corporate) )*vice president\b/g;
+/** Words that can follow a top role and still describe the whole company ("President, CEO and Chairman of the Company"). */
+const TITLE_WORDS = new Set(
+  "the company inc corp corporation co ltd plc llc holdings and chief executive financial operating officer president chairman chair ceo cfo coo of".split(" "),
+);
+
+/** "President, Walmart U.S." or "CEO of Verizon Consumer Group": a business unit's leader, not the company's. */
+function unitLeader(title: string, companyName: string): boolean {
+  const unit = title.match(/\b(?:president|chief executive officer|ceo|chief operating officer|coo)(?:\s*,\s*|\s+of\s+|\s+-\s+)(.+)$/)?.[1];
+  if (!unit) return false;
+  const company = new Set(normalizeText(companyName).split(/[^a-z0-9]+/));
+  return unit.split(/[^a-z0-9]+/).some((w) => w && !company.has(w) && !TITLE_WORDS.has(w));
+}
 
 /**
  * Check a leadership_change against the roles that count: the officer's title
@@ -151,8 +167,12 @@ export function checkLeadershipRole(role: unknown, quote: string, companyName = 
     return `leadership_change needs role: the officer's title at ${companyName}, as written in the quote.`;
   }
   const r = normalizeText(role);
-  if (NOT_COUNTED.test(r) || !(TOP_ROLE.test(r) || TECH_LEADER.test(r))) {
+  const title = r.replace(VICE_PRESIDENT, " ");
+  if (NOT_COUNTED.test(title) || !(TOP_ROLE.test(title) || TECH_LEADER.test(title))) {
     return `"${role}" isn't a role that counts. leadership_change is only for the CEO, CFO, COO, president, or a technology, data, digital, AI, analytics or transformation leader; directors and legal, HR or accounting officers don't count. Don't record this one.`;
+  }
+  if (unitLeader(title, companyName)) {
+    return `"${role}" leads a business unit, not ${companyName}. leadership_change is only for company-wide leaders. Don't record this one.`;
   }
   const q = normalizeText(quote);
   const at: number[] = [];

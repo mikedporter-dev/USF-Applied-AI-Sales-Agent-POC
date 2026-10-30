@@ -4,6 +4,7 @@ import {
   type Corpus,
   findPassages,
   locateQuote,
+  normalizeText,
   type RecordedSignal,
   type ResearchEvent,
   type ResearchResult,
@@ -392,6 +393,11 @@ export async function runResearch(env: Env, ticker: string, emit: Emit, now = ne
           args.kind === "ai_mention" && typeof args.quote === "string" && locateQuote(riskFactors, args.quote)
             ? "Risk-factor language doesn't count as an ai_mention: it's boilerplate most companies share. Use the business section or MD&A."
             : validateSignal(args, corpus, now, profile.name);
+        if (typeof result !== "string" && signals.some((s) => sameSignal(s, result))) {
+          const reason = `Already recorded: ${result.summary}. Don't record the same evidence twice.`;
+          await emit({ type: "rejected", tool: name, reason, attempted: result.quote });
+          return fail(reason);
+        }
         if (typeof result === "string") {
           await emit({ type: "rejected", tool: name, reason: result, attempted: typeof args.quote === "string" ? args.quote : undefined });
           return fail(result);
@@ -631,6 +637,11 @@ function describeFacts(facts: CompanyFacts): string {
   const sector = facts.gicsSector ? `${facts.gicsSector} (${facts.index ? `GICS, ${facts.index}` : "from SIC code"})` : "sector unknown";
   const revenue = facts.revenueUsd ? `revenue $${(facts.revenueUsd / 1e9).toFixed(1)}B (SEC XBRL)` : "revenue not found";
   return `${sector} · ${revenue}`;
+}
+
+/** The same evidence recorded twice: same kind, and the same quote or summary. */
+function sameSignal(a: RecordedSignal, b: RecordedSignal): boolean {
+  return a.kind === b.kind && (normalizeText(a.quote) === normalizeText(b.quote) || normalizeText(a.summary) === normalizeText(b.summary));
 }
 
 /** Whether to ask, before finishing, if a company that talks about AI already reports AI working at scale. */
