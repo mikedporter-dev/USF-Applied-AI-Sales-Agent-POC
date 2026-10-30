@@ -470,3 +470,20 @@
     padding: 64px 0;
   }
 }
+.soon {
+  display: inline-block;
+  margin-left: 8px;
+  padding: 1px 7px;
+  border-radius: 999px;
+  background: var(--tier2-bg);
+  color: var(--tier2);
+  font-size: 11px;
+  font-style: normal;
+  font-weight: 500;
+  vertical-align: middle;
+}
+.source .soon {
+  display: block;
+  width: fit-content;
+  margin: 6px auto 0;
+}

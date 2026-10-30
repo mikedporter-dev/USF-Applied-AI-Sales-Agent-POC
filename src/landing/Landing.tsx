@@ -6,16 +6,16 @@ const ranked = scoreAccounts(SAMPLE_ACCOUNTS, SAMPLE_AS_OF);
 const featured = ranked[0];
 const pct = (w: number) => `${Math.round(w * 100)}%`;
 
-const SOURCES = [
+const SOURCES: { name: string; role: string; soon?: boolean }[] = [
   { name: "LinkedIn", role: "Your first-degree connections, Manager and above" },
   { name: "Massive", role: "Size, industry, 10-K, 8-K, and Form 3 filings" },
   { name: "SEC EDGAR", role: "8-K exhibits, 10-K and 10-Q MD&A" },
-  { name: "Apollo", role: "One target contact per account, email after approval" },
+  { name: "Apollo", role: "One target contact per account, email after approval", soon: true },
   { name: "NVIDIA", role: "LLM reads filings and drafts the why-now" },
   { name: "Supabase", role: "Accounts, signals, and approvals in one place" },
 ];
 
-const STEPS = [
+const STEPS: { title: string; body: string; soon?: boolean }[] = [
   {
     title: "Start from your network",
     body: "Match first-degree LinkedIn connections at Manager level or above against the S&P Composite 1500. Only companies where you know someone get scored.",
@@ -30,6 +30,7 @@ const STEPS = [
   },
   {
     title: "Find who to reach",
+    soon: true,
     body: `For the top ${OUTREACH_LIST.min}–${OUTREACH_LIST.max} accounts, Tier 1 first, Apollo finds one target contact. Emails are enriched only after you approve the list, within your credits.`,
   },
 ];
@@ -184,7 +185,10 @@ export function Landing() {
           <div className="source-grid">
             {SOURCES.map((s) => (
               <div key={s.name} className="source">
-                <strong>{s.name}</strong>
+                <strong>
+                  {s.name}
+                  {s.soon && <em className="soon">Coming soon</em>}
+                </strong>
                 <span>{s.role}</span>
               </div>
             ))}
@@ -239,7 +243,10 @@ export function Landing() {
             {STEPS.map((step, i) => (
               <li key={step.title}>
                 <span className="mono step-num">{String(i + 1).padStart(2, "0")}</span>
-                <h3>{step.title}</h3>
+                <h3>
+                  {step.title}
+                  {step.soon && <em className="soon">Coming soon</em>}
+                </h3>
                 <p>{step.body}</p>
               </li>
             ))}
