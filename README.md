@@ -137,6 +137,7 @@ Run the files in `supabase/migrations/` in order in the Supabase SQL editor, or 
 2. `0002_target_contact_approval.sql`: seller approval on `target_contacts`
 3. `0003_ai_mention_signal.sql`: the `ai_mention` signal kind (run on its own, outside a transaction)
 4. `0004_universe_import.sql`: S&P 1500 import columns on `companies`
+5. `0005_linkedin_connections.sql`: `companies.legal_name`; `connections.company_as_listed` and `imported_at`
 
 To test with fictional data, run `supabase/seed/sample_accounts.sql` the same way. It's safe to run
 more than once, and its header has the one-line command that removes the sample data.
@@ -167,6 +168,25 @@ branches run a dry run that prints the report without the Supabase secrets. An i
 fewer than 1,500 companies isn't saved. Companies that leave the indexes are kept with
 `in_index = false`, so their signals and connections stay. The Accounts page shows the counts, and
 research uses the imported GICS sector and index membership.
+
+### LinkedIn import
+
+The Accounts page imports the seller's `Connections.csv` (LinkedIn: Settings → Data privacy → Get a copy
+of your data → Connections). LinkedIn has no API for a member's connections, so the export is the only
+source. The browser reads the file (`src/shared/connections.ts`), keeps Manager+ connections by title
+(Manager, Director, VP, C-Suite, Owner/Partner), and matches their companies to the S&P 1500:
+
+- by common name or SEC name, ignoring case, punctuation, accents and suffixes ("The Walt Disney
+  Company" = "WALT DISNEY CO");
+- by well-known brands and subsidiaries ("NBCUniversal" → Comcast, "ESPN" → Disney, "AWS" → Amazon),
+  matched exactly;
+- by a distinctive company name followed by more words ("Verizon Business" → Verizon). Short names
+  aren't matched this way, so "Apple Leisure Group" isn't Apple.
+
+It shows a preview (matched companies with the names people listed, and the most common companies that
+aren't in the S&P 1500) before saving. Only matched connections are sent (`POST /api/connections`, in
+batches), with name, title, seniority, company as listed and date connected; emails and profile links
+stay in the browser. Each import replaces the previous one.
 
 ## Deploy
 
@@ -201,8 +221,8 @@ In build order:
 
 1. **S&P Composite 1500 universe** (done): index membership, GICS sector, SEC CIK and revenue for each
    company, refreshed weekly by GitHub Actions.
-2. **LinkedIn import:** upload the seller's `Connections.csv` export, keep Manager+ connections, and
-   match them to the universe.
+2. **LinkedIn import** (done): upload `Connections.csv` on the Accounts page; Manager+ connections are
+   matched to the S&P 1500.
 3. **Saved research:** run the research agent for every matched company in the background
    (Cloudflare Workflows or Queues) and save its signals, quotes and run log to Supabase.
 4. **Daily monitor:** a scheduled job (Cloudflare Cron Triggers) checks each matched company on EDGAR

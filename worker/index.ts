@@ -1,4 +1,5 @@
 import { parseApprovalRequest } from "../src/shared/approval";
+import { parseConnectionBatch } from "../src/shared/connections";
 import { SAMPLE_ACCOUNTS, SAMPLE_AS_OF } from "../src/shared/sampleData";
 import { scoreAccounts } from "../src/shared/scoring";
 import type { ResearchEvent } from "../src/shared/research";
@@ -117,6 +118,28 @@ async function handleApi(request: Request, env: Env, ctx: ExecutionContext, path
   if (path === "/api/universe" && request.method === "GET") {
     if (!supabase.isConfigured(env)) return json({ error: "The S&P 1500 list needs Supabase." }, 503);
     return json(await supabase.universeSummary(env));
+  }
+  if (path === "/api/universe/companies" && request.method === "GET") {
+    if (!supabase.isConfigured(env)) return json({ error: "The S&P 1500 list needs Supabase." }, 503);
+    return json({ companies: await supabase.universeCompanies(env) });
+  }
+
+  // LinkedIn import: the browser reads Connections.csv and matches it; only
+  // Manager+ connections at S&P 1500 companies are sent here, in batches.
+  if (path.startsWith("/api/connections") && request.method === "POST") {
+    if (!supabase.isConfigured(env)) return json({ error: "Saving connections needs Supabase." }, 503);
+    if (path === "/api/connections") {
+      const parsed = parseConnectionBatch(await request.json().catch(() => null));
+      if (typeof parsed === "string") return json({ error: parsed }, 400);
+      return json({ saved: await supabase.saveConnections(env, parsed.importedAt, parsed.connections) });
+    }
+    if (path === "/api/connections/finish") {
+      const body = (await request.json().catch(() => null)) as { importedAt?: unknown } | null;
+      if (typeof body?.importedAt !== "string" || Number.isNaN(Date.parse(body.importedAt))) {
+        return json({ error: "importedAt must be a timestamp" }, 400);
+      }
+      return json({ replaced: await supabase.finishConnectionsImport(env, body.importedAt) });
+    }
   }
 
   const brief = path.match(/^\/api\/accounts\/(\d{10})\/brief$/);

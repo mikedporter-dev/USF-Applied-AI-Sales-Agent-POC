@@ -112,7 +112,10 @@ export function addRevenueFrame(into: Map<string, Revenue>, data: unknown, tag: 
 export interface UniverseRow {
   cik: string;
   ticker: string;
+  /** Common name, from the index list ("Colgate-Palmolive"). */
   name: string;
+  /** SEC registrant name ("COLGATE PALMOLIVE CO"). */
+  legalName: string;
   gicsSector: string;
   index: IndexMembership;
   revenueUsd?: number;
@@ -150,7 +153,8 @@ export function buildUniverse(
       rows.set(sec.cik, {
         cik: sec.cik,
         ticker: sec.ticker,
-        name: sec.title,
+        name: h.name.replace(/\s*\((?:class|series) [a-z0-9]+\)$/i, ""), // "Alphabet Inc. (Class A)"
+        legalName: sec.title,
         gicsSector: h.sector,
         index,
         revenueUsd: r?.usd,
@@ -175,6 +179,7 @@ export function companyRecord(r: UniverseRow, importedAt: string) {
     cik: r.cik,
     ticker: r.ticker,
     name: r.name,
+    legal_name: r.legalName,
     industry: r.gicsSector,
     index_membership: r.index,
     revenue_usd: r.revenueUsd ?? null,

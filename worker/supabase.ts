@@ -1,5 +1,6 @@
 import { createClient, type SupabaseClient } from "@supabase/supabase-js";
 import { approvalChange } from "../src/shared/approval";
+import type { MatchedConnection, UniverseCompany } from "../src/shared/connections";
 import type { UniverseSummary } from "../src/shared/universe";
 import type {
   AccountInput,
@@ -186,4 +187,52 @@ export async function universeListing(env: Env, cik: string): Promise<UniverseLi
   if (row.error || any.error) throw new Error(`Supabase: ${(row.error ?? any.error)!.message}`);
   const listed = row.data as { industry: string; index_membership: IndexMembership } | null;
   return { loaded: (any.count ?? 0) > 0, index: listed?.index_membership, gicsSector: listed?.industry };
+}
+
+/** Every company in the S&P 1500, for matching LinkedIn companies. Supabase returns at most 1,000 rows per request. */
+export async function universeCompanies(env: Env): Promise<UniverseCompany[]> {
+  const db = client(env);
+  const out: UniverseCompany[] = [];
+  for (let from = 0; ; from += 1000) {
+    const { data, error } = await db
+      .from("companies")
+      .select("cik, ticker, name, legal_name")
+      .eq("in_index", true)
+      .not("indexed_at", "is", null)
+      .order("cik")
+      .range(from, from + 999)
+      .returns<{ cik: string; ticker: string; name: string; legal_name: string | null }[]>();
+    if (error) throw new Error(`Supabase: ${error.message}`);
+    out.push(...data.map((r) => ({ cik: r.cik, ticker: r.ticker, name: r.name, legalName: r.legal_name ?? undefined })));
+    if (data.length < 1000) return out;
+  }
+}
+
+/** Save one batch of a LinkedIn import, stamped with the import's start time. */
+export async function saveConnections(env: Env, importedAt: string, connections: MatchedConnection[]): Promise<number> {
+  const { error } = await client(env)
+    .from("connections")
+    .insert(
+      connections.map((c) => ({
+        cik: c.cik,
+        name: c.name,
+        title: c.title,
+        seniority: c.seniority,
+        connected_on: c.connectedOn ?? null,
+        company_as_listed: c.companyAsListed,
+        imported_at: importedAt,
+      })),
+    );
+  if (error) throw new Error(`Supabase: ${error.message}`);
+  return connections.length;
+}
+
+/** After every batch is saved, an import replaces the connections from earlier imports (and any sample data). */
+export async function finishConnectionsImport(env: Env, importedAt: string): Promise<number> {
+  const { count, error } = await client(env)
+    .from("connections")
+    .delete({ count: "exact" })
+    .or(`imported_at.is.null,imported_at.lt."${importedAt}"`);
+  if (error) throw new Error(`Supabase: ${error.message}`);
+  return count ?? 0;
 }
