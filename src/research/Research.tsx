@@ -2,7 +2,7 @@ import { type FormEvent, useState } from "react";
 import { Logo, ScoreBar, TierPill, formatDate, formatRevenue, signalLabel } from "../components/ui";
 import type { RecordedSignal, ResearchEvent, ResearchResult } from "../shared/research";
 
-type Step = Extract<ResearchEvent, { type: "status" | "tool" | "rejected" }>;
+type Step = Extract<ResearchEvent, { type: "status" | "tool" | "rejected" | "signal" }>;
 
 /** Read the agent's newline-delimited JSON stream, calling onEvent for each event. */
 async function streamEvents(res: Response, onEvent: (e: ResearchEvent) => void) {
@@ -47,8 +47,10 @@ export function Research() {
         throw new Error(body.error ?? `Request failed (${res.status})`);
       }
       await streamEvents(res, (event) => {
-        if (event.type === "signal") setSignals((s) => [...s, event.signal]);
-        else if (event.type === "result") setResult(event.result);
+        if (event.type === "signal") {
+          setSignals((s) => [...s, event.signal]);
+          setSteps((s) => [...s, event]);
+        } else if (event.type === "result") setResult(event.result);
         else if (event.type === "error") setError(event.message);
         else setSteps((s) => [...s, event]);
       });
@@ -115,6 +117,11 @@ export function Research() {
                     {s.type === "tool" && (
                       <>
                         <code>{s.name}</code> {s.detail}
+                      </>
+                    )}
+                    {s.type === "signal" && (
+                      <>
+                        Recorded <strong>{signalLabel(s.signal)}</strong>: {s.signal.summary}
                       </>
                     )}
                     {s.type === "rejected" && (

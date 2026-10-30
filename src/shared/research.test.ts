@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { addToCorpus, type Corpus, findPassages, htmlToText, validateSignal } from "./research";
+import { addToCorpus, checkLeadershipRole, type Corpus, findPassages, htmlToText, validateSignal } from "./research";
 
 const NOW = new Date("2026-10-29T12:00:00Z");
 const URL_A = "https://www.sec.gov/Archives/edgar/data/1/a.txt";
@@ -112,6 +112,53 @@ describe("validateSignal", () => {
     });
     const stitched = "We will not invest in new AI programs ... We expect strong growth in pet nutrition";
     expect(validateSignal({ ...valid, quote: stitched }, c, NOW)).toContain("not found");
+  });
+});
+
+describe("checkLeadershipRole", () => {
+  const CL = "Colgate-Palmolive Company";
+
+  it("accepts the company's own CEO, CFO and technology, data or AI leaders", () => {
+    expect(checkLeadershipRole("Chief Information Officer", "The Board appointed Jane Roe as Chief Information Officer, effective June 1.", CL)).toBeUndefined();
+    expect(checkLeadershipRole("Chief Executive Officer", "John Doe, Chief Executive Officer of Colgate-Palmolive, will retire.", CL)).toBeUndefined();
+    expect(checkLeadershipRole("Chief Data & Analytics Officer", "named Chief Data & Analytics Officer of the Company", CL)).toBeUndefined();
+  });
+
+  it.each([
+    [undefined, "elected X as Chief Legal Officer", "needs role"],
+    ["Chief Legal Officer and Secretary", "elected Betsy Fishbone to the position of Chief Legal Officer and Secretary", "isn't a role that counts"],
+    ["Director", "elected Christopher S. Boerner to the Colgate-Palmolive Board", "isn't a role that counts"],
+    ["Executive Vice President", "currently Executive Vice President, Deputy Chief Legal Officer", "isn't a role that counts"],
+    ["Chief Technology Officer", "appointed Jane Roe as Chief Data Officer", "doesn't appear in the quote"],
+    // The real CL 8-K of 2026-03-12: outside CEOs joining or leaving the board.
+    [
+      "Chief Executive Officer",
+      "elected Christopher S. Boerner, Ph.D., Board Chair and Chief Executive Officer of Bristol-Myers Squibb Company, to the Colgate-Palmolive Board",
+      "title at another company",
+    ],
+    [
+      "Chief Executive Officer",
+      "in light of the demands associated with his new position as Chief Executive Officer of The Kraft Heinz Company",
+      "title at another company",
+    ],
+  ])("rejects role %j", (role, quote, reason) => {
+    expect(checkLeadershipRole(role, quote, CL)).toContain(reason);
+  });
+
+  it("is applied when a leadership_change is recorded", () => {
+    const c: Corpus = new Map();
+    addToCorpus(c, URL_A, "Steven A. Cahillane will not stand for reelection, in light of his new position as Chief Executive Officer of The Kraft Heinz Company.", {
+      source: "massive",
+      filedAt: "2026-03-12",
+      form: "8-K",
+    });
+    const result = validateSignal(
+      { ...valid, kind: "leadership_change", form: "8-K", role: "Chief Executive Officer", quote: "his new position as Chief Executive Officer of The Kraft Heinz Company" },
+      c,
+      NOW,
+      CL,
+    );
+    expect(result).toContain("title at another company");
   });
 });
 

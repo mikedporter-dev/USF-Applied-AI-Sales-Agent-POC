@@ -133,6 +133,40 @@ export function quoteMismatch(corpus: Corpus, quote: string): string {
   return `quote was not found as written. It matches the text up to here: "…${yours}…" but the text reads "…${theirs}…". Copy the text exactly, including parentheses and quotation marks, or shorten the quote with "..." around the part that differs.`;
 }
 
+/** Roles whose arrival or departure can start or reshape AI work. */
+const TOP_ROLE = /\b(chief executive|chief financial|chief operating|president|ceo|cfo|coo)\b/;
+const TECH_LEADER = /\b(chief|head)\b.*\b(information|technology|digital|data|analytics|ai|artificial intelligence|transformation|innovation)\b|\b(cio|cto|cdo|caio)\b/;
+const NOT_COUNTED = /\b(director|board|vice president|vice chair|legal|counsel|secretary|human resources|people|accounting|controller|treasurer|compliance)\b/;
+
+/**
+ * Check a leadership_change against the roles that count: the officer's title
+ * must be one we track, appear in the quote, and not be a title at another
+ * company (an outside CEO joining the board). Returns an error, or undefined.
+ */
+export function checkLeadershipRole(role: unknown, quote: string, companyName = "the company"): string | undefined {
+  if (typeof role !== "string" || !role.trim()) {
+    return `leadership_change needs role: the officer's title at ${companyName}, as written in the quote.`;
+  }
+  const r = normalizeText(role);
+  if (NOT_COUNTED.test(r) || !(TOP_ROLE.test(r) || TECH_LEADER.test(r))) {
+    return `"${role}" isn't a role that counts. leadership_change is only for the CEO, CFO, COO, president, or a technology, data, digital, AI, analytics or transformation leader; directors and legal, HR or accounting officers don't count. Don't record this one.`;
+  }
+  const q = normalizeText(quote);
+  const at: number[] = [];
+  for (let i = q.indexOf(r); i !== -1; i = q.indexOf(r, i + 1)) at.push(i);
+  if (at.length === 0) return `role "${role}" doesn't appear in the quote. Quote the sentence that names the role, and copy the title as written.`;
+  // "Chief Executive Officer of The Kraft Heinz Company" is someone else's title.
+  const own = normalizeText(companyName).split(/[\s-]/)[0];
+  const ownTitle = at.some((i) => {
+    const after = q.slice(i + r.length).match(/^,?\s*(?:of|at)\s+(.{0,40})/);
+    return !after || after[1].startsWith("the company") || after[1].startsWith(own);
+  });
+  if (!ownTitle) {
+    return `In the quote, "${role}" is a title at another company, not ${companyName}. Board members and outside executives don't count. Don't record this one.`;
+  }
+  return undefined;
+}
+
 export interface RecordedSignal extends Signal {
   quote: string;
 }
@@ -143,7 +177,7 @@ export interface RecordedSignal extends Signal {
  * the agent actually read this run; the url, source and (when known) filing date
  * and form are taken from the document it was found in, not from the agent.
  */
-export function validateSignal(args: unknown, corpus: Corpus, asOf: Date): RecordedSignal | string {
+export function validateSignal(args: unknown, corpus: Corpus, asOf: Date, companyName?: string): RecordedSignal | string {
   if (typeof args !== "object" || args === null) return "Arguments must be an object.";
   const a = args as Record<string, unknown>;
 
@@ -159,6 +193,10 @@ export function validateSignal(args: unknown, corpus: Corpus, asOf: Date): Recor
   }
   if (a.quote.length < QUOTE_LENGTH.min) {
     return `quote is ${a.quote.length} characters; quote at least ${QUOTE_LENGTH.min} so it can be checked.`;
+  }
+  if (a.kind === "leadership_change") {
+    const roleError = checkLeadershipRole(a.role, a.quote, companyName);
+    if (roleError) return roleError;
   }
   const url = locateQuote(corpus, a.quote, a.url);
   if (!url) return quoteMismatch(corpus, a.quote);

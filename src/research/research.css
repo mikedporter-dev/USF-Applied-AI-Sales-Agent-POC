@@ -76,6 +76,10 @@
   background: transparent;
   color: var(--muted);
 }
+.rs-step-signal {
+  background: var(--tier1-bg, var(--surface-2));
+  color: var(--text);
+}
 .rs-step-rejected {
   background: var(--tier2-bg);
   color: var(--tier2);
