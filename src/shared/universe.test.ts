@@ -31,10 +31,12 @@ describe("buildUniverse", () => {
     const { rows, unmatched } = buildUniverse([{ index: "S&P 500", holdings: SP500 }], parseSecTickers(SEC_TICKERS), revenue);
 
     expect(rows.map((r) => r.ticker)).toEqual(["AAPL", "GOOGL", "BRK-B", "CL", "CWEN"]);
+    expect(rows.find((r) => r.ticker === "GOOGL")?.name).toBe("Alphabet Inc."); // share class dropped
     expect(rows.find((r) => r.ticker === "CL")).toEqual({
       cik: "0000021665",
       ticker: "CL",
-      name: "COLGATE PALMOLIVE CO",
+      name: "Colgate-Palmolive",
+      legalName: "COLGATE PALMOLIVE CO",
       gicsSector: "Consumer Staples",
       index: "S&P 500",
       revenueUsd: 20382e6,
@@ -71,7 +73,7 @@ describe("parseWikipediaConstituents", () => {
 
 describe("companyRecord", () => {
   it("maps a row to the companies table, stamped with the import time", () => {
-    const row = { cik: "0000021665", ticker: "CL", name: "Colgate", gicsSector: "Consumer Staples", index: "S&P 500" as const };
+    const row = { cik: "0000021665", ticker: "CL", name: "Colgate-Palmolive", legalName: "COLGATE PALMOLIVE CO", gicsSector: "Consumer Staples", index: "S&P 500" as const };
     expect(companyRecord(row, "2026-11-02T11:17:00Z")).toMatchObject({
       industry: "Consumer Staples",
       index_membership: "S&P 500",

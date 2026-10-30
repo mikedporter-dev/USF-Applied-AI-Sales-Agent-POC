@@ -87,6 +87,8 @@ async function main() {
   if (rows.length < MIN_COMPANIES) throw new Error(`Only ${rows.length} companies matched, far fewer than 1,500. Nothing was saved.`);
 
   if (DRY_RUN) {
+    // The full list, so a dry run can be checked against (e.g. for matching LinkedIn company names).
+    for (const r of rows) console.log(`UNIVERSE\t${r.cik}\t${r.ticker}\t${r.name}\t${r.legalName}`);
     console.log("Dry run: nothing saved.");
     return;
   }
