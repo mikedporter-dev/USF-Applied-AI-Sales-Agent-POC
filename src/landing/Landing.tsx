@@ -69,8 +69,8 @@ const SCORES = [
   {
     name: "Gap",
     weight: COMPOSITE_WEIGHTS.gap,
-    body: "Stated ambition with nothing to show for it yet. Pilots and programs with no reported results.",
-    signals: ["Pilots, no results", "Ambition without outcomes"],
+    body: "Stated ambition with nothing to show for it yet. Pilots, commitments and AI talk with no reported results.",
+    signals: ["Pilots, no results", "Commitments without outcomes", "AI talk, no results"],
   },
 ];
 

@@ -27,12 +27,19 @@ describe("scoring", () => {
     const mentions = [1, 2, 3].map(() => signal("ai_mention"));
     expect(intentScore(mentions)).toBe(10);
     expect(intentScore([signal("ai_commitment")])).toBeGreaterThan(intentScore(mentions));
-    expect(gapScore(mentions)).toBe(0);
+    expect(gapScore(mentions)).toBe(15);
   });
 
   it("scores gap from pilots and ambition without results", () => {
     expect(gapScore([signal("ai_pilot_no_results"), signal("ai_commitment")])).toBe(60);
-    expect(gapScore([signal("ai_commitment"), signal("ai_scaled_results")])).toBe(0);
+    expect(gapScore([1, 2, 3].map(() => signal("ai_commitment")))).toBe(40);
+    expect(gapScore([signal("ai_commitment"), signal("ai_mention")])).toBe(35);
+    expect(gapScore([signal("restructuring"), signal("leadership_change")])).toBe(0);
+  });
+
+  it("finds no gap once AI results at scale are reported", () => {
+    expect(gapScore([signal("ai_commitment"), signal("ai_mention"), signal("ai_scaled_results")])).toBe(0);
+    expect(gapScore([signal("ai_pilot_no_results"), signal("ai_scaled_results")])).toBe(40);
   });
 
   it("maps totals to tiers", () => {
