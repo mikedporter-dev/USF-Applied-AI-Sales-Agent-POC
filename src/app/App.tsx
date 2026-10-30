@@ -13,6 +13,7 @@ import type {
   TargetContact,
   Tier,
 } from "../shared/types";
+import { ConnectionsImport } from "./ConnectionsImport";
 import { UniverseStatus } from "./UniverseStatus";
 
 type TierFilter = "all" | Tier;
@@ -55,7 +56,7 @@ export function App() {
   const [notice, setNotice] = useState<Notice | null>(null);
   const [briefs, setBriefs] = useState<Record<string, BriefState>>({});
 
-  useEffect(() => {
+  const loadAccounts = () =>
     getJson<AccountsResponse>("/api/accounts")
       .catch(() => offlineSample())
       .then((res) => {
@@ -63,6 +64,9 @@ export function App() {
         setSelectedCik(res.accounts[0]?.company.cik ?? null);
         setIncluded(new Set(selectOutreachList(res.accounts).map((a) => a.company.cik)));
       });
+
+  useEffect(() => {
+    void loadAccounts();
     getJson<HealthResponse>("/api/health")
       .then(setHealth)
       .catch(() => setHealth(null));
@@ -183,7 +187,12 @@ export function App() {
         <aside className="ws-side" aria-label="Pipeline">
           <span className="label">Pipeline</span>
           <ol className="pipeline">
-            <PipelineStep n={1} title="Match network" note="LinkedIn import not connected" state="pending" />
+            <PipelineStep
+              n={1}
+              title="Match network"
+              note={accounts.length ? `${accounts.length} companies with a Manager+ connection` : "Import LinkedIn connections"}
+              state={accounts.length ? "done" : "active"}
+            />
             <PipelineStep n={2} title="Read filings" note="Massive + EDGAR not connected" state="pending" />
             <PipelineStep n={3} title="Score & rank" note={`${accounts.length} accounts ranked`} state="done" />
             <PipelineStep n={4} title="Find contacts" note="Apollo not connected" state="pending" />
@@ -215,6 +224,13 @@ export function App() {
             <h1>Ranked accounts</h1>
             {data && <p>Signals from the 12 months ending {formatDate(data.asOf)}. Only companies where you have a Manager+ connection are scored.</p>}
           </div>
+
+          {data?.source === "supabase" && (
+            <ConnectionsImport
+              connectionCount={accounts.reduce((n, a) => n + a.connections.length, 0)}
+              onSaved={() => void loadAccounts()}
+            />
+          )}
 
           <div className="ws-stats">
             <Stat label="Accounts ranked" value={accounts.length} />
