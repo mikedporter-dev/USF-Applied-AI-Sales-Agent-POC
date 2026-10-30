@@ -421,6 +421,27 @@ describe("EDGAR documents", () => {
   });
 });
 
+describe("duplicate signals", () => {
+  it("rejects the same evidence recorded twice", async () => {
+    const signal = {
+      kind: "ai_commitment",
+      summary: "Commits $250 million to AI in claims.",
+      form: "10-K",
+      filed_at: "2026-02-20",
+      url: TENK_URL,
+      quote: "commits $250 million to artificial intelligence",
+    };
+    const { result, events } = await collect([
+      () => turn(toolCall("a", "search_10k", { section: "business", terms: ["artificial intelligence"] })),
+      () => turn(toolCall("b", "record_signal", signal), toolCall("c", "record_signal", { ...signal, summary: "Same quote again." })),
+      () => turn(toolCall("d", "finish", { summary: "Draft." })),
+      () => turn(toolCall("e", "finish", { summary: "Commits to AI." })),
+    ]);
+    expect(result.signals).toHaveLength(1);
+    expect(events).toContainEqual(expect.objectContaining({ type: "rejected", reason: expect.stringContaining("Already recorded") }));
+  });
+});
+
 describe("AI results check", () => {
   it("asks only when AI is mentioned or committed to without results at scale", () => {
     expect(needsResultsCheck([{ kind: "ai_commitment" }])).toBe(true);

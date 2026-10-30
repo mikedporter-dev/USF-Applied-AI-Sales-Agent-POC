@@ -124,11 +124,27 @@ describe("checkLeadershipRole", () => {
     expect(checkLeadershipRole("Chief Data & Analytics Officer", "named Chief Data & Analytics Officer of the Company", CL)).toBeUndefined();
   });
 
+  it("accepts vice presidents who hold a role that counts", () => {
+    // Mondelez 8-K of 2026-06-18, rejected before.
+    const MDLZ = "Mondelez International, Inc.";
+    const quote = "appointed Amit Banati as Executive Vice President and Chief Financial Officer, effective July 1, 2026";
+    expect(checkLeadershipRole("Executive Vice President and Chief Financial Officer", quote, MDLZ)).toBeUndefined();
+    expect(checkLeadershipRole("Senior Vice President and Chief Information Officer", "named Jane Roe Senior Vice President and Chief Information Officer", CL)).toBeUndefined();
+    expect(checkLeadershipRole("President, Chief Executive Officer and Chairman", "elected John Doe President, Chief Executive Officer and Chairman", CL)).toBeUndefined();
+  });
+
   it.each([
     [undefined, "elected X as Chief Legal Officer", "needs role"],
     ["Chief Legal Officer and Secretary", "elected Betsy Fishbone to the position of Chief Legal Officer and Secretary", "isn't a role that counts"],
     ["Director", "elected Christopher S. Boerner to the Colgate-Palmolive Board", "isn't a role that counts"],
     ["Executive Vice President", "currently Executive Vice President, Deputy Chief Legal Officer", "isn't a role that counts"],
+    ["Vice President, Finance", "appointed Jane Roe Vice President, Finance", "isn't a role that counts"],
+    [
+      "Executive Vice President, President and Chief Executive Officer, Walmart U.S.",
+      "John Doe, Executive Vice President, President and Chief Executive Officer, Walmart U.S., will retire",
+      "leads a business unit",
+    ],
+    ["Chief Executive Officer of Colgate Europe", "appointed Jane Roe Chief Executive Officer of Colgate Europe", "leads a business unit"],
     ["Chief Technology Officer", "appointed Jane Roe as Chief Data Officer", "doesn't appear in the quote"],
     // The real CL 8-K of 2026-03-12: outside CEOs joining or leaving the board.
     [
@@ -185,6 +201,12 @@ describe("leadership changes", () => {
 
   it("treats single and double quotation marks alike", () => {
     const quote = "The Board of Directors (the 'Board') appointed Josh Example as Chief Executive Officer of the Company";
+    expect(validateSignal({ ...change, quote }, c(), NOW, "Example Co")).toMatchObject({ kind: "leadership_change" });
+  });
+
+  it("ignores a space inside parentheses", () => {
+    // Radian 8-K of 2026-02-03: the agent wrote ( "Radian US") for ("Radian US").
+    const quote = 'The Board of Directors ( the "Board" ) appointed Josh Example as Chief Executive Officer of the Company';
     expect(validateSignal({ ...change, quote }, c(), NOW, "Example Co")).toMatchObject({ kind: "leadership_change" });
   });
 

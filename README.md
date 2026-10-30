@@ -121,7 +121,9 @@ users or revenue count as AI at scale, so AI vendors are demoted rather than ran
 mentions quoted from 10-K risk factors are rejected as boilerplate. A leadership change must name the
 officer's role, which code checks: it must be a role that counts (CEO, CFO, COO, president, or a
 technology, data, digital, AI, analytics or transformation leader), appear in the quote, and not be a
-title at another company, so directors and outside executives joining the board are rejected. The quote
+title at another company or a business unit ("CEO, Walmart U.S."), so directors, unit heads and outside
+executives joining the board are rejected; a vice president who is also CFO or CIO counts. The same
+evidence recorded twice is rejected, so it can't add to the score. The quote
 must also show someone arriving or leaving (appointed, promoted, retiring…), so amendments to pay or
 severance plans don't count, except on a Form 3, which is itself a new officer's filing. In the last
 4 turns the agent is reminded to record what it has; if it still hasn't finished, it gets 2 wrap-up turns in which it can only record findings and

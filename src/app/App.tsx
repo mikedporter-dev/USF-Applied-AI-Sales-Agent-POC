@@ -38,6 +38,13 @@ function offlineSample(): AccountsResponse {
   return { source: "sample", asOf: SAMPLE_AS_OF.toISOString(), accounts: scoreAccounts(SAMPLE_ACCOUNTS, SAMPLE_AS_OF) };
 }
 
+/** Company name or ticker contains the search text, ignoring case and punctuation ("colg", "cl", "brk.b"). */
+function matchesQuery(account: AccountsResponse["accounts"][number], query: string): boolean {
+  const key = (text: string) => text.toLowerCase().replace(/[^a-z0-9]/g, "");
+  const q = key(query);
+  return !q || key(account.company.name).includes(q) || key(account.company.ticker).includes(q);
+}
+
 async function getJson<T>(url: string, init?: RequestInit): Promise<T> {
   const res = await fetch(url, init);
   const body = await res.json().catch(() => ({}));
@@ -49,6 +56,7 @@ export function App() {
   const [data, setData] = useState<AccountsResponse | null>(null);
   const [health, setHealth] = useState<HealthResponse | null>(null);
   const [filter, setFilter] = useState<TierFilter>("all");
+  const [query, setQuery] = useState("");
   const [selectedCik, setSelectedCik] = useState<string | null>(null);
   const [sheetOpen, setSheetOpen] = useState(false);
   const [included, setIncluded] = useState<Set<string>>(new Set());
@@ -73,10 +81,8 @@ export function App() {
   }, []);
 
   const accounts = data?.accounts ?? [];
-  const visible = useMemo(
-    () => (filter === "all" ? accounts : accounts.filter((a) => a.tier === filter)),
-    [accounts, filter],
-  );
+  const matches = useMemo(() => accounts.filter((a) => matchesQuery(a, query)), [accounts, query]);
+  const visible = useMemo(() => (filter === "all" ? matches : matches.filter((a) => a.tier === filter)), [matches, filter]);
   const selected = accounts.find((a) => a.company.cik === selectedCik);
   const tierCount = (t: Tier) => accounts.filter((a) => a.tier === t).length;
   const researchedCount = accounts.filter((a) => a.researchedAt).length;
@@ -93,6 +99,13 @@ export function App() {
       else next.add(cik);
       return next;
     });
+  };
+
+  const search = (text: string) => {
+    setQuery(text);
+    // One match: show it, so typing a ticker jumps straight to the account.
+    const found = accounts.filter((a) => matchesQuery(a, text) && (filter === "all" || a.tier === filter));
+    if (text.trim() && found.length === 1) setSelectedCik(found[0].company.cik);
   };
 
   const openAccount = (cik: string) => {
@@ -249,24 +262,47 @@ export function App() {
             <Stat label="Approved contacts" value={approvalCount("approved")} note={`${approvalCount("pending")} pending`} />
           </div>
 
-          <div className="tabs" role="tablist" aria-label="Filter by tier">
-            {(["all", 1, 2, 3] as TierFilter[]).map((t) => (
-              <button
-                key={t}
-                role="tab"
-                aria-selected={filter === t}
-                className={filter === t ? "tab is-active" : "tab"}
-                onClick={() => setFilter(t)}
-              >
-                {t === "all" ? `All ${accounts.length}` : `Tier ${t} · ${tierCount(t)}`}
-              </button>
-            ))}
+          <div className="list-tools">
+            <input
+              type="search"
+              className="search"
+              placeholder="Search company or ticker"
+              aria-label="Search accounts by company or ticker"
+              value={query}
+              onChange={(e) => search(e.target.value)}
+            />
+            <div className="tabs" role="tablist" aria-label="Filter by tier">
+              {(["all", 1, 2, 3] as TierFilter[]).map((t) => (
+                <button
+                  key={t}
+                  role="tab"
+                  aria-selected={filter === t}
+                  className={filter === t ? "tab is-active" : "tab"}
+                  onClick={() => setFilter(t)}
+                >
+                  {t === "all" ? `All ${accounts.length}` : `Tier ${t} · ${tierCount(t)}`}
+                </button>
+              ))}
+            </div>
           </div>
 
           {!data ? (
             <p className="empty">Loading accounts…</p>
           ) : visible.length === 0 ? (
-            <p className="empty">No accounts in this tier.</p>
+            <p className="empty">
+              {!query.trim() ? (
+                "No accounts in this tier."
+              ) : matches.length > 0 ? (
+                <>
+                  No match in this tier.{" "}
+                  <button className="link" onClick={() => setFilter("all")}>
+                    Show {matches.length} in all tiers
+                  </button>
+                </>
+              ) : (
+                `No account matches "${query.trim()}".`
+              )}
+            </p>
           ) : (
             <div className="rows" role="list">
               <div className="row row-head" aria-hidden="true">
