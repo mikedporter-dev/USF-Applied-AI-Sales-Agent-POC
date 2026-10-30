@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { documentText, filingDocuments, recentFilings } from "./edgar";
+import { annualRevenue, documentText, filingDocuments, recentFilings } from "./edgar";
 import type { Env } from "./env";
 
 const env = { SEC_USER_AGENT: "Test Dev test@example.com" } as Env;
@@ -57,6 +57,37 @@ describe("edgar", () => {
     stub({ [url]: "<p>Net sales grew 2%</p>" });
     expect(await documentText(env, url)).toBe("Net sales grew 2%");
     await expect(documentText(env, "https://evil.example.com/x.htm")).rejects.toThrow(/Only documents/);
+  });
+
+  it("takes the latest full-year 10-K revenue across revenue tags", async () => {
+    const base = "https://data.sec.gov/api/xbrl/companyconcept/CIK0000021665/us-gaap";
+    stub({
+      // An old tag with stale values, and the current tag with quarterly and annual facts.
+      [`${base}/SalesRevenueNet.json`]: {
+        units: { USD: [{ start: "2016-01-01", end: "2016-12-31", val: 15195e6, form: "10-K", filed: "2017-02-23" }] },
+      },
+      [`${base}/RevenueFromContractWithCustomerExcludingAssessedTax.json`]: {
+        units: {
+          USD: [
+            { start: "2025-01-01", end: "2025-12-31", val: 20382e6, form: "10-K", filed: "2026-02-23" },
+            { start: "2025-07-01", end: "2025-09-30", val: 5130e6, form: "10-Q", filed: "2025-10-31" },
+            { start: "2024-01-01", end: "2024-12-31", val: 20101e6, form: "10-K", filed: "2025-02-14" },
+          ],
+        },
+      },
+    });
+    expect(await annualRevenue(env, "21665")).toEqual({
+      usd: 20382e6,
+      fiscalYearEnd: "2025-12-31",
+      tag: "RevenueFromContractWithCustomerExcludingAssessedTax",
+      form: "10-K",
+      filed: "2026-02-23",
+    });
+  });
+
+  it("returns undefined when no revenue tag has annual data", async () => {
+    stub({});
+    expect(await annualRevenue(env, "1")).toBeUndefined();
   });
 
   it("refuses to call SEC without a contact", async () => {

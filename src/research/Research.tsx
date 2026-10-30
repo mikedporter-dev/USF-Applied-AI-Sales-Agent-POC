@@ -146,8 +146,10 @@ function ResultCard({ result: r }: { result: ResearchResult }) {
     "Not in your network yet: the app only ranks companies where you have a Manager+ connection.",
     "S&P Composite 1500 membership wasn't checked.",
     r.usedEdgar ? null : "SEC EDGAR isn't configured, so 10-Q MD&A and 8-K exhibits weren't read.",
-    r.company.revenueUsd ? null : "Revenue wasn't found in a filing, so the Fit score treats the company as small.",
-    r.company.industry ? null : "No sector was set, so Fit uses the default industry weight.",
+    r.facts?.revenueSource ?? "Revenue wasn't found in SEC data, so the Fit score treats the company as small.",
+    r.facts?.sectorSource
+      ? `Sector: ${r.facts?.sectorSource}. An approximation until the S&P 1500 list supplies the GICS sector.`
+      : "No sector could be mapped from the SIC code, so Fit uses the default industry weight.",
     r.stopReason === "step_limit" ? "The agent hit its turn limit before finishing." : null,
   ].filter(Boolean);
 

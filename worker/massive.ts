@@ -24,6 +24,7 @@ export interface CompanyProfile {
   ticker: string;
   name: string;
   cik: string;
+  sicCode?: string;
   sicDescription?: string;
   employees?: number;
   homepageUrl?: string;
@@ -35,6 +36,7 @@ export async function companyProfile(env: Env, ticker: string): Promise<CompanyP
       ticker: string;
       name: string;
       cik?: string;
+      sic_code?: string;
       sic_description?: string;
       total_employees?: number;
       homepage_url?: string;
@@ -45,6 +47,7 @@ export async function companyProfile(env: Env, ticker: string): Promise<CompanyP
     ticker: r.ticker,
     name: r.name,
     cik: r.cik,
+    sicCode: r.sic_code,
     sicDescription: r.sic_description,
     employees: r.total_employees,
     homepageUrl: r.homepage_url,
