@@ -180,8 +180,8 @@ source. The browser reads the file (`src/shared/connections.ts`), keeps Manager+
   Company" = "WALT DISNEY CO");
 - by well-known brands and subsidiaries ("NBCUniversal" → Comcast, "ESPN" → Disney, "AWS" → Amazon),
   matched exactly;
-- by a distinctive company name followed by more words ("Verizon Business" → Verizon). Short names
-  aren't matched this way, so "Apple Leisure Group" isn't Apple.
+- by a company name followed only by unit or region words ("Verizon Business", "Salesforce Japan"),
+  so "Universal Music Group" isn't Universal Corp.
 
 It shows a preview (matched companies with the names people listed, and the most common companies that
 aren't in the S&P 1500) before saving. Only matched connections are sent (`POST /api/connections`, in

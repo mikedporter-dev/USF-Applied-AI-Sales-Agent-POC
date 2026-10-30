@@ -143,11 +143,16 @@ const ALIASES: Record<string, string[]> = {
   META: ["meta", "facebook", "instagram", "whatsapp", "oculus", "reality labs", "meta reality labs"],
   MSFT: ["linkedin", "github", "xbox", "microsoft gaming", "activision blizzard", "activision", "blizzard entertainment", "bethesda softworks"],
   "FOXA FOX": ["fox sports", "fox news", "fox news media", "fox entertainment", "fox television stations", "tubi"],
-  "PSKY PARA": [
-    "paramount", "paramount global", "paramount pictures", "paramount streaming", "cbs", "cbs news", "cbs sports",
-    "cbs interactive", "nickelodeon", "showtime", "mtv", "pluto tv", "skydance", "skydance media", "skydance animation",
+  // Paramount and Warner Bros. Discovery merged into Skydance Corporation (SKYD).
+  "SKYD PSKY PARA": [
+    "paramount", "paramount global", "paramount skydance", "paramount pictures", "paramount streaming", "cbs", "cbs news",
+    "cbs sports", "cbs interactive", "nickelodeon", "showtime", "mtv", "pluto tv", "skydance media", "skydance animation",
   ],
-  WBD: ["warner bros", "warnermedia", "hbo", "hbo max", "max", "cnn", "discovery", "warner bros games", "tnt sports", "turner sports", "dc studios"],
+  "SKYD WBD": [
+    "warner bros discovery", "warner bros", "warner bros entertainment", "warner bros pictures", "warner bros television",
+    "warner bros games", "warnermedia", "discovery", "discovery communications", "hbo", "hbo max", "max", "cnn",
+    "tnt sports", "turner sports", "dc studios",
+  ],
   CHTR: ["spectrum", "spectrum networks", "spectrum reach"],
   TMUS: ["t mobile"],
   "NWSA NWS": ["dow jones", "wall street journal"],
@@ -174,8 +179,16 @@ export interface UniverseCompany {
   legalName?: string;
 }
 
-/** Single-word names this short or generic would match too much as a prefix ("Apple Leisure Group"). */
-const MIN_PREFIX_KEY = 7;
+/**
+ * Words that name a unit or region of a company rather than a different
+ * company: "Verizon Business" is Verizon, but "Universal Music" isn't Universal
+ * Corp and "Universal Health" isn't either.
+ */
+const UNIT_WORDS = new Set([
+  "business", "businesses", "cloud", "digital", "studio", "studios", "labs", "ventures", "advertising", "ads",
+  "enterprise", "enterprises", "commercial", "international", "global", "worldwide", "usa", "us", "america",
+  "americas", "north", "latin", "europe", "emea", "apac", "asia", "japan", "uk", "canada", "india", "mexico",
+]);
 
 export interface CompanyMatcher {
   match(company: string): UniverseCompany | undefined;
@@ -183,8 +196,8 @@ export interface CompanyMatcher {
 
 /**
  * Index the S&P 1500 by name, SEC name and the aliases above. Aliases match
- * exactly; official names also match as a prefix ("Verizon Business"), which
- * isn't safe for brands ("Spectrum Health" isn't Charter's Spectrum).
+ * exactly; official names also match when followed by unit or region words
+ * ("Verizon Business"), which isn't safe for brands ("Spectrum Health").
  */
 export function companyMatcher(companies: UniverseCompany[]): CompanyMatcher {
   const byName = new Map<string, UniverseCompany>();
@@ -205,11 +218,10 @@ export function companyMatcher(companies: UniverseCompany[]): CompanyMatcher {
       if (!key) return undefined;
       const exact = byName.get(key) ?? byAlias.get(key);
       if (exact) return exact;
+      // "Verizon Business": a listed name followed only by unit or region words.
       const words = key.split(" ");
-      for (let n = words.length - 1; n >= 1; n--) {
-        const prefix = words.slice(0, n).join(" ");
-        if (n === 1 && prefix.length < MIN_PREFIX_KEY) break;
-        const hit = byName.get(prefix);
+      for (let n = words.length - 1; n >= 1 && UNIT_WORDS.has(words[n]); n--) {
+        const hit = byName.get(words.slice(0, n).join(" "));
         if (hit) return hit;
       }
       return undefined;
