@@ -77,6 +77,22 @@ describe("validateSignal", () => {
     expect(typeof validateSignal({ ...valid, quote: outOfOrder }, corpus(), NOW)).toBe("string");
   });
 
+  it("ignores backslashes the model leaves before quotation marks", () => {
+    const quote = 'We are \\"leading in capabilities\\" such as data, analytics and AI';
+    expect(typeof validateSignal({ ...valid, quote }, corpus(), NOW)).toBe("object");
+  });
+
+  it("says where a near-miss quote first differs from the text", () => {
+    const c: Corpus = new Map();
+    addToCorpus(c, URL_A, 'As a result, on April 8, 2026, the Board of Directors of the Company (the "Board") elected Betsy Fishbone as Chief Legal Officer.', {
+      source: "massive",
+      filedAt: "2026-04-09",
+    });
+    const result = validateSignal({ ...valid, quote: "on April 8, 2026, the Board of Directors of the Company elected Betsy Fishbone" }, c, NOW);
+    expect(result).toContain('matches the text up to here');
+    expect(result).toContain('the company (the "board") elected');
+  });
+
   it("rejects an ellipsis that would stitch together passages far apart", () => {
     const c: Corpus = new Map();
     addToCorpus(c, URL_A, `We will not invest in new AI programs. ${"Unrelated text. ".repeat(200)} We expect strong growth in pet nutrition.`, {

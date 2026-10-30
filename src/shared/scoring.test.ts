@@ -23,6 +23,13 @@ describe("scoring", () => {
     expect(intentScore(commitments)).toBe(50);
   });
 
+  it("weighs generic AI mentions well below concrete commitments", () => {
+    const mentions = [1, 2, 3].map(() => signal("ai_mention"));
+    expect(intentScore(mentions)).toBe(10);
+    expect(intentScore([signal("ai_commitment")])).toBeGreaterThan(intentScore(mentions));
+    expect(gapScore(mentions)).toBe(0);
+  });
+
   it("scores gap from pilots and ambition without results", () => {
     expect(gapScore([signal("ai_pilot_no_results"), signal("ai_commitment")])).toBe(60);
     expect(gapScore([signal("ai_commitment"), signal("ai_scaled_results")])).toBe(0);

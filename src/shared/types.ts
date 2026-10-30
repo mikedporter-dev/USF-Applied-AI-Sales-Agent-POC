@@ -17,6 +17,7 @@ export interface Company {
 
 export type SignalKind =
   | "ai_commitment" // concrete AI investment, program, or target stated in a filing
+  | "ai_mention" // AI named as a priority or capability, with nothing concrete behind it
   | "leadership_change" // officer change (8-K Item 5.02, Form 3)
   | "acquisition" // 8-K Item 2.01
   | "restructuring" // 8-K Item 2.05 or reorg disclosed elsewhere
