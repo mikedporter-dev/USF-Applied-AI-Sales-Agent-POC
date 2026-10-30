@@ -24,6 +24,7 @@ export const MIN_COMPANIES = 1200;
 /** XBRL tags for total revenue, and the calendar years to look in, latest first. */
 export const REVENUE_TAGS = [
   "Revenues",
+  "RevenuesNetOfInterestExpense", // how most banks report revenue
   "RevenueFromContractWithCustomerExcludingAssessedTax",
   "RevenueFromContractWithCustomerIncludingAssessedTax",
 ] as const;
@@ -138,7 +139,8 @@ export function buildUniverse(
   const unmatched: UniverseBuild["unmatched"] = [];
   for (const { index, holdings: list } of holdings) {
     for (const h of list) {
-      const sec = secTickers.get(tickerKey(h.ticker));
+      // A class suffix SEC doesn't list (CWEN.A) falls back to the base ticker (CWEN).
+      const sec = secTickers.get(tickerKey(h.ticker)) ?? (h.ticker.includes(".") ? secTickers.get(tickerKey(h.ticker.split(".")[0])) : undefined);
       if (!sec) {
         unmatched.push({ ...h, index });
         continue;

@@ -10,6 +10,7 @@ const SP500 = [
   { ticker: "BRK.B", name: "Berkshire Hathaway", sector: "Financials" },
   { ticker: "CL", name: "Colgate-Palmolive", sector: "Consumer Staples" },
   { ticker: "ZZZZ", name: "Delisted Co", sector: "Industrials" },
+  { ticker: "CWEN.A", name: "Clearway Energy (Class A)", sector: "Utilities" },
 ];
 
 const SEC_TICKERS = {
@@ -18,6 +19,7 @@ const SEC_TICKERS = {
   2: { cik_str: 1652044, ticker: "GOOG", title: "Alphabet Inc." },
   3: { cik_str: 1067983, ticker: "BRK-B", title: "BERKSHIRE HATHAWAY INC" },
   4: { cik_str: 21665, ticker: "CL", title: "COLGATE PALMOLIVE CO" },
+  5: { cik_str: 1567683, ticker: "CWEN", title: "Clearway Energy, Inc." },
 };
 
 describe("buildUniverse", () => {
@@ -28,7 +30,7 @@ describe("buildUniverse", () => {
 
     const { rows, unmatched } = buildUniverse([{ index: "S&P 500", holdings: SP500 }], parseSecTickers(SEC_TICKERS), revenue);
 
-    expect(rows.map((r) => r.ticker)).toEqual(["AAPL", "GOOGL", "BRK-B", "CL"]);
+    expect(rows.map((r) => r.ticker)).toEqual(["AAPL", "GOOGL", "BRK-B", "CL", "CWEN"]);
     expect(rows.find((r) => r.ticker === "CL")).toEqual({
       cik: "0000021665",
       ticker: "CL",

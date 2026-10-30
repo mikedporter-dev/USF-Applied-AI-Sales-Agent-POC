@@ -157,7 +157,8 @@ indexes into `companies`:
 - **CIK** from SEC's `company_tickers.json`, matching ticker styles (BRK.B, BRK-B). A company with two
   share classes (GOOGL, GOOG) is one row.
 - **Annual revenue** from SEC XBRL frames: one file per revenue tag per calendar year covers every
-  filer, so revenue for all 1,500 companies takes six requests.
+  filer, so revenue for all 1,500 companies takes eight requests (four tags, including the one most
+  banks use, over two years).
 
 It runs in GitHub rather than the Worker because parsing these multi-megabyte files takes far more
 than the Worker's CPU budget. It needs three repository secrets (Settings → Secrets and variables →
