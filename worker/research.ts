@@ -132,6 +132,7 @@ function toolDefinitions(withEdgar: boolean): ToolDefinition[] {
         filed_at: { type: "string", description: "filing date, YYYY-MM-DD" },
         url: { type: "string", description: "url of the filing or document you read it in; the quote is what's checked" },
         quote: { type: "string", description: "the one or two sentences that show the signal, copied exactly" },
+        role: { type: "string", description: "leadership_change only: the officer's title at this company, as written in the quote" },
       },
       ["kind", "summary", "form", "filed_at", "url", "quote"],
     ),
@@ -150,7 +151,7 @@ Filings older than the window don't count.
 Signal kinds:
 - ai_commitment: a concrete AI investment, program, target or dated goal.
 - ai_mention: the company names AI as a priority, capability or focus area, but with no concrete investment, program, target or date (e.g. "leading in capabilities such as data, analytics and AI"). It counts for less. Record at most 2, the clearest. Risk-factor boilerplate ("AI may pose risks", "competitors may use AI") doesn't count.
-- leadership_change: a new or departing officer who would sponsor or shape AI work: CEO, CFO, COO, president, or a technology, data, digital, AI, analytics or transformation leader (8-K Item 5.02, Form 3). Legal, HR, accounting and other officers don't count, and directors are not officers.
+- leadership_change: a new or departing officer who would sponsor or shape AI work: CEO, CFO, COO, president, or a technology, data, digital, AI, analytics or transformation leader (8-K Item 5.02, Form 3). Legal, HR, accounting and other officers don't count, and directors are not officers: most 8-K Item 5.02s are about directors, so read who the person is. Give the role argument; code checks it.
 - acquisition: a completed acquisition (8-K Item 2.01).
 - restructuring: a restructuring or reorganization (8-K Item 2.05, or described in a filing).
 - ai_reorg: a restructuring explicitly tied to AI.
@@ -386,7 +387,7 @@ export async function runResearch(env: Env, ticker: string, emit: Emit, now = ne
         const result =
           args.kind === "ai_mention" && typeof args.quote === "string" && locateQuote(riskFactors, args.quote)
             ? "Risk-factor language doesn't count as an ai_mention: it's boilerplate most companies share. Use the business section or MD&A."
-            : validateSignal(args, corpus, now);
+            : validateSignal(args, corpus, now, profile.name);
         if (typeof result === "string") {
           await emit({ type: "rejected", tool: name, reason: result, attempted: typeof args.quote === "string" ? args.quote : undefined });
           return fail(result);
@@ -519,7 +520,9 @@ Already known: ${describeFacts(facts)}; industry "${profile.sicDescription ?? "u
         role: "user",
         content:
           `${left} turn${left === 1 ? "" : "s"} left. Record the signals you have evidence for with record_signal, then finish.` +
-          (missing.length ? `\nKey 8-Ks with nothing recorded yet (record each that qualifies):\n- ${missing.join("\n- ")}` : ""),
+          (missing.length
+            ? `\nKey 8-Ks with nothing recorded yet. Record each that qualifies; skip director changes and officers outside the roles listed:\n- ${missing.join("\n- ")}`
+            : ""),
       });
     }
   }

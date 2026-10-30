@@ -115,7 +115,10 @@ at 16 model turns and 6 EDGAR documents. The 8-K list includes the text of key i
 acquisitions, 2.05 restructurings, 5.02 officer changes), so the agent can record them without reading
 each filing. Code tracks which key 8-Ks nothing was recorded from, names them in the 4-turns-left
 reminder, and reminds the agent once more before it finishes; it decides whether they qualify. AI
-mentions quoted from 10-K risk factors are rejected as boilerplate. In the last
+mentions quoted from 10-K risk factors are rejected as boilerplate. A leadership change must name the
+officer's role, which code checks: it must be a role that counts (CEO, CFO, COO, president, or a
+technology, data, digital, AI, analytics or transformation leader), appear in the quote, and not be a
+title at another company, so directors and outside executives joining the board are rejected. In the last
 4 turns the agent is reminded to record what it has; if it still hasn't finished, it gets 2 wrap-up turns in which it can only record findings and
 finish. Each turn resends the conversation, so large filing text older than 3 turns is replaced with a
 short note (quotes from it are still checked against the full text). A model turn that takes over 90
