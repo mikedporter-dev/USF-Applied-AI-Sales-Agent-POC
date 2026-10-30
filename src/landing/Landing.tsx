@@ -35,6 +35,24 @@ const STEPS: { title: string; body: string; soon?: boolean }[] = [
   },
 ];
 
+const ROADMAP = [
+  {
+    title: "Apollo contacts",
+    status: "Coming soon",
+    body: `For the top ${OUTREACH_LIST.min}–${OUTREACH_LIST.max} accounts, find one target contact by walking the role ladder, and enrich their email only after you approve them.`,
+  },
+  {
+    title: "AI team benchmarks",
+    status: "Needs paid data",
+    body: "How a company's AI headcount and hiring compare with what its stated ambition requires.",
+  },
+  {
+    title: "Peer comparisons",
+    status: "Needs paid data",
+    body: "Where an account sits against industry peers on AI maturity, to sharpen the gap story.",
+  },
+];
+
 const SCORES = [
   {
     name: "Fit",
@@ -67,6 +85,7 @@ function Nav() {
           <a href="#how">How it works</a>
           <a href="#scoring">Scoring</a>
           <a href="#sources">Data sources</a>
+          <a href="#roadmap">Roadmap</a>
         </nav>
         <a className="btn btn-primary btn-sm" href="/app/">
           Open accounts
@@ -313,18 +332,19 @@ export function Landing() {
           </div>
         </section>
 
-        <section className="container section">
-          <span className="eyebrow">Scoped for later</span>
-          <h2 className="section-title">Signals that need paid data</h2>
-          <div className="cards-2">
-            <article className="card card-muted">
-              <h3>AI team benchmarks</h3>
-              <p>How a company's AI headcount and hiring compare with what its stated ambition requires.</p>
-            </article>
-            <article className="card card-muted">
-              <h3>Peer comparisons</h3>
-              <p>Where an account sits against industry peers on AI maturity, to sharpen the gap story.</p>
-            </article>
+        <section className="container section" id="roadmap">
+          <span className="eyebrow">Roadmap</span>
+          <h2 className="section-title">What's coming next</h2>
+          <div className="cards-3">
+            {ROADMAP.map((item) => (
+              <article key={item.title} className="card card-muted">
+                <h3>
+                  {item.title}
+                  <em className="soon">{item.status}</em>
+                </h3>
+                <p>{item.body}</p>
+              </article>
+            ))}
           </div>
         </section>
 
@@ -332,7 +352,7 @@ export function Landing() {
           <div className="cta">
             <Shapes />
             <h2>Prospect the right accounts at the right moment</h2>
-            <p>Start with the sample ranked list. Your own network and live filings come next.</p>
+            <p>See the accounts where you know someone, ranked on 12 months of SEC filings.</p>
             <a className="btn btn-primary" href="/app/">
               Open the account list
             </a>
